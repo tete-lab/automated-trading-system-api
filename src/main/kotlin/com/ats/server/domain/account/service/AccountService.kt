@@ -25,7 +25,11 @@ class AccountService(
             accountNum = req.accountNum,
             accountName = req.accountName,
             apiKey = req.apiKey,
-            secretKey = req.secretKey
+            secretKey = req.secretKey,
+            buyRsi = req.buyRsi,
+            sellRsi = req.sellRsi,
+            isVirtual = req.isVirtual,
+            isActive = req.isActive
         )
         return accountRepository.save(account).memberAccountId!!
     }

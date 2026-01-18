@@ -29,6 +29,7 @@ class SysConfigService(
         return SysConfigRes(entity.configCode, entity.configValue, entity.descTxt, entity.updatedAt.toString())
     }
 
+
     // 생성
     @Transactional // 쓰기 작업 허용
     fun createConfig(req: SysConfigCreateReq): String {
@@ -65,4 +66,6 @@ class SysConfigService(
         }
         sysConfigRepository.deleteById(code)
     }
+
+
 }
