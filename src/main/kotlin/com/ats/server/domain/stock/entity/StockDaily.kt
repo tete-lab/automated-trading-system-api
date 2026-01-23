@@ -41,6 +41,15 @@ class StockDaily(
     @Column(name = "volume_price", precision = 15, scale = 2)
     var volumePrice: BigDecimal?,
 
+    @Column(name = "fluctuation_rate")
+    var fluctuationRate: String?,
+    @Column(name = "individual_buy")
+    var individualBuy: String?,
+    @Column(name = "organ_buy")
+    var organBuy: String?,
+    @Column(name = "foreigner_buy")
+    var foreignerBuy: String?,
+
     // [보조 지표]
     @Column(name = "sma_20", precision = 15, scale = 2)
     var sma20: BigDecimal? = null,
@@ -78,6 +87,7 @@ class StockDaily(
     fun update(
         closePrice: BigDecimal, openPrice: BigDecimal?, highPrice: BigDecimal?, lowPrice: BigDecimal?,
         volume: Long?, volumePrice: BigDecimal?,
+        fluctuationRate: String?, individualBuy: String?, organBuy: String?, foreignerBuy: String?,
         sma20: BigDecimal?, sma50: BigDecimal?,
         ema9: BigDecimal?, ema12: BigDecimal?, ema26: BigDecimal?,
         rsi: BigDecimal?, macd: BigDecimal?, signalLine: BigDecimal?,
@@ -89,6 +99,11 @@ class StockDaily(
         this.lowPrice = lowPrice
         this.volume = volume
         this.volumePrice = volumePrice
+        this.fluctuationRate = fluctuationRate
+        this.individualBuy = individualBuy
+        this.organBuy = organBuy
+        this.foreignerBuy = foreignerBuy
+
         this.sma20 = sma20
         this.sma50 = sma50
         this.ema9 = ema9

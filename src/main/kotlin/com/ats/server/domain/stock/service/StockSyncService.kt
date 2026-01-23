@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import org.slf4j.LoggerFactory
 
 @Service
 class StockSyncService(
@@ -24,6 +25,8 @@ class StockSyncService(
     private val stockMasterRepository: StockMasterRepository
 ) {
 
+    // 로거 설정
+    private val log = LoggerFactory.getLogger(javaClass)
     // =========================================================================
     // 1. Stock Master & 시가총액 동기화 (Source: 공공데이터포털)
     // =========================================================================
@@ -60,7 +63,7 @@ class StockSyncService(
                 saveCount++
             } catch (e: Exception) {
                 // 로그만 찍고 계속 진행
-                println("Sync Error [${item.itmsNm}]: ${e.message}")
+                log.info("Sync Error [${item.itmsNm}]: ${e.message}")
             }
         }
         return saveCount
@@ -83,7 +86,7 @@ class StockSyncService(
             val items = publicDataClient.getStockPriceInfo(dateStr, dateStr)
 
             if (items.isNotEmpty()) {
-                println("최신 데이터 발견: $dateStr (총 ${items.size} 종목)")
+                log.info("최신 데이터 발견: $dateStr (총 ${items.size} 종목)")
                 return items
             }
         }
@@ -118,46 +121,4 @@ class StockSyncService(
     }
 
 
-    // =========================================================================
-    // 2. Stock Daily 동기화 (Source: 공공데이터포털)
-    // =========================================================================
-    @Transactional
-    fun syncDailyByPublicData(stockCode: String, startDate: LocalDate, endDate: LocalDate) {
-        val startStr = startDate.format(DateTimeFormatter.ofPattern("yyyyMMdd"))
-        val endStr = endDate.format(DateTimeFormatter.ofPattern("yyyyMMdd"))
-
-        // [수정됨] Client가 자동 페이징을 해주므로 그냥 호출하면 기간 내 모든 데이터가 옴
-        val rawItems = publicDataClient.getStockPriceInfo(startStr, endStr)
-
-        // 해당 종목만 필터링 (공공데이터는 보통 'A'+코드 사용)
-        val items = rawItems
-            .filter { it.srtnCd == "A$stockCode" || it.srtnCd == stockCode }
-            .sortedBy { it.basDt }
-
-        if (items.isEmpty()) {
-            println("[$stockCode] 해당 기간 데이터 없음")
-            return
-        }
-
-        // 기존 데이터 삭제
-        val existingList = stockDailyRepository.findAllByStockCodeAndBaseDateBetweenOrderByBaseDateAsc(stockCode, startDate, endDate)
-        stockDailyRepository.deleteAll(existingList)
-        stockDailyRepository.flush()
-
-        // 저장
-        for (item in items) {
-            stockDailyService.createDaily(
-                StockDailyCreateReq(
-                    stockCode = stockCode,
-                    baseDate = LocalDate.parse(item.basDt, DateTimeFormatter.ofPattern("yyyyMMdd")),
-                    closePrice = item.clpr.toBigDecimal(),
-                    openPrice = item.mkp.toBigDecimal(),
-                    highPrice = item.hipr.toBigDecimal(),
-                    lowPrice = item.lopr.toBigDecimal(), // DTO 필드명 lopr
-                    volume = item.trqu.toLong(),
-                    volumePrice = item.trPrc.toBigDecimal()
-                )
-            )
-        }
-    }
 }

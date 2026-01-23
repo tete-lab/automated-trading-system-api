@@ -49,4 +49,6 @@ class StockDailyController(
     ): ResponseEntity<Long> {
         return ResponseEntity.ok(stockDailyService.updateDaily(stockCode, baseDate, req))
     }
+
+
 }

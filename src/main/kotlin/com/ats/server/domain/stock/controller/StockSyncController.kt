@@ -1,5 +1,7 @@
 package com.ats.server.domain.stock.controller
 
+import com.ats.server.domain.stock.service.StockDailyCollector
+import com.ats.server.domain.stock.service.StockDailyService
 import com.ats.server.domain.stock.service.StockSyncService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -13,7 +15,9 @@ import java.time.LocalDate
 @RestController
 @RequestMapping("/api/v1/sync")
 class StockSyncController(
-    private val stockSyncService: StockSyncService
+    private val stockSyncService: StockSyncService,
+    private val stockDailyService: StockDailyService,
+    private val stockDailyCollector: StockDailyCollector
 ) {
 
     //이 api는 공공데이터 포털에서의 정보를 토대로 stock_master와 fundametal 데이터의 기본값만 가져옴
@@ -24,19 +28,36 @@ class StockSyncController(
         return ResponseEntity.ok("종목 마스터 및 시가총액 동기화 완료 (처리 건수: $count)")
     }
 
-    @Operation(summary = "2. 일자별 시세 동기화", description = "특정 종목의 기간별 시세(OHLCV)를 가져옵니다.")
-    @PostMapping("/daily/{stockCode}")
-    fun syncDaily(
-        @Parameter(description = "종목코드 (예: 005930)", example = "005930")
+    //일자를 입력하면 30일전 데이터부터 가져옴.
+    @Operation(summary = "2. 외부(키움) 일자별 주가 수집", description = "키움증권 API를 통해 특정 일자의 시세를 수집하여 DB에 저장합니다.(일자 입력하면 30일전 데이터까지 가져옴)")
+    @PostMapping("/fetch/{stockCode}")
+    fun fetchDailyFromKiwoom(
         @PathVariable stockCode: String,
-
-        @Parameter(description = "시작일", example = "2024-01-01")
-        @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") startDate: LocalDate,
-
-        @Parameter(description = "종료일", example = "2024-01-31")
-        @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") endDate: LocalDate
+        @Parameter(description = "타겟일 (yyyyMMdd)", example = "20260101")
+        @RequestParam @DateTimeFormat(pattern = "yyyyMMdd") targetDate: LocalDate
     ): ResponseEntity<String> {
-        stockSyncService.syncDailyByPublicData(stockCode, startDate, endDate)
-        return ResponseEntity.ok("[$stockCode] 시세 데이터 동기화 완료")
+        val count = stockDailyService.fetchAndSaveDailyPrice(stockCode, targetDate)
+        return ResponseEntity.ok("총 ${count}건의 데이터가 수집/갱신되었습니다.")
+    }
+
+    //일자를 입력하면 30일전 데이터부터 가져옴.
+    @Operation(summary = "3. 외부(키움) 일자별 주가 수집(전체 종목)", description = "키움증권 API를 통해 특정 일자의 시세를 수집하여 DB에 저장합니다.(일자 입력하면 30일전 데이터까지 가져옴)")
+    @PostMapping("/fetch-all")
+    fun fetchDailyAllFromKiwoom(
+        @Parameter(description = "타겟일 (yyyyMMdd)", example = "20260101")
+        @RequestParam @DateTimeFormat(pattern = "yyyyMMdd") targetDate: LocalDate
+    ): ResponseEntity<String> {
+        val count = stockDailyCollector.collectAll(targetDate)
+        return ResponseEntity.ok("총 ${count}건의 데이터가 수집/갱신되었습니다.")
+    }
+
+    @PostMapping("/fetch/krx-kosdaq")
+    fun fetchDailyKrxKosdaq(
+        @Parameter(description = "4. 외부(KRX) 일자별 주가 수집", example = "2026-01-19")
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+        targetDate: LocalDate
+    ): ResponseEntity<String> {
+        val count = stockDailyService.fetchAndSaveKrxKosdaqPrices(targetDate)
+        return ResponseEntity.ok("성공적으로 ${count}건의 코스닥 시세 데이터를 수집했습니다.")
     }
 }
