@@ -46,6 +46,13 @@ dependencies {
 	// MySQL
 	runtimeOnly("com.mysql:mysql-connector-j")
 
+	implementation("org.apache.httpcomponents.client5:httpclient5")
+	// [필수] 코루틴 핵심 라이브러리 (launch, runBlocking, Dispatchers 등)
+	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
+
+	// [선택/권장] Spring과 코루틴을 매끄럽게 연결해주는 리액터 확장 (Spring Boot 사용 시 추천)
+	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
+
 	// Test
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
