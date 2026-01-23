@@ -8,10 +8,13 @@ import com.ats.server.domain.token.entity.Token
 import com.ats.server.domain.token.repository.TokenRepository
 import com.ats.server.infra.kiwoom.client.KiwoomClient
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+
 
 @Service
 class TokenService(
@@ -19,8 +22,13 @@ class TokenService(
     private val sysConfigRepository: SysConfigRepository,
     private val memberAccountRepository: MemberAccountRepository,
     private val kiwoomClient: KiwoomClient,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    @Value("\${api.kiwoom.is-mock:false}") private val isMock: Boolean
 ) {
+
+    // 로거 설정
+    private val log = LoggerFactory.getLogger(javaClass)
+
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
 
     /**
@@ -89,7 +97,7 @@ class TokenService(
             kiwoomClient.revokeToken(appKey, secretKey, tokenEntity.token)
         } catch (e: Exception) {
             // 폐기 실패해도 DB 삭제는 진행하거나 로그만 남김
-            println("토큰 폐기 API 호출 실패 (이미 만료되었을 수 있음): ${e.message}")
+            log.info("토큰 폐기 API 호출 실패 (이미 만료되었을 수 있음): ${e.message}")
         }
 
         // DB 삭제
@@ -98,8 +106,14 @@ class TokenService(
 
     private fun getAppKeys(memberId: String?): Pair<String, String> {
         return (if (memberId == null) {
-            val appKey = sysConfigRepository.findById("MAIN_KIWOOM_APP_KEY").orElseThrow().configValue
-            val secretKey = sysConfigRepository.findById("MAIN_KIWOOM_APP_SECRET").orElseThrow().configValue
+            var appKeyValue =  "MAIN_KIWOOM_APP_KEY"
+            var appSecretValue = "MAIN_KIWOOM_APP_SECRET"
+            if(isMock) {
+                appKeyValue = "MOCK_KIWOOM_APP_KEY"
+                appSecretValue = "MOCK_KIWOOM_APP_SECRET"
+            }
+            val appKey = sysConfigRepository.findById(appKeyValue).orElseThrow().configValue
+            val secretKey = sysConfigRepository.findById(appSecretValue).orElseThrow().configValue
             Pair(appKey, secretKey)
         } else {
             val appKey = memberAccountRepository.findById(memberId.toLong()).orElseThrow().apiKey

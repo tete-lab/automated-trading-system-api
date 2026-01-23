@@ -25,6 +25,11 @@ data class StockDailyCreateReq(
     val volume: Long?,
     val volumePrice: BigDecimal?,
 
+    val fluctuationRate: String?,
+    val individualBuy: String?,
+    val organBuy: String?,
+    val foreignerBuy: String?,
+
     // 지표들은 생성 시점엔 없을 수도 있음
     val sma20: BigDecimal? = null,
     val sma50: BigDecimal? = null,
@@ -32,7 +37,7 @@ data class StockDailyCreateReq(
     val macd: BigDecimal? = null,
     val signalLine: BigDecimal? = null,
     val crossType: BigDecimal? = null,
-    val recommendYn: String = "Y"
+    val recommendYn: String = "N"
 )
 
 // 업데이트용 DTO (PK나 UniqueKey인 stockCode, baseDate 제외)
@@ -43,6 +48,12 @@ data class StockDailyUpdateReq(
     val lowPrice: BigDecimal?,
     val volume: Long?,
     val volumePrice: BigDecimal?,
+
+    val fluctuationRate: String?,
+    val individualBuy: String?,
+    val organBuy: String?,
+    val foreignerBuy: String?,
+
     val sma20: BigDecimal?,
     val sma50: BigDecimal?,
     val ema9: BigDecimal?,
@@ -64,7 +75,18 @@ data class StockDailyRes(
     val highPrice: BigDecimal?,
     val lowPrice: BigDecimal?,
     val volume: Long?,
+    val volumePrice: BigDecimal?,
+    val fluctuationRate: String?,
+    val individualBuy: String?,
+    val organBuy: String?,
+    val foreignerBuy: String?,
+    val sma20: BigDecimal?,
+    val sma50: BigDecimal?,
+    val ema9: BigDecimal?,
+    val ema12: BigDecimal?,
+    val ema26: BigDecimal?,
     val rsi: BigDecimal?,
     val macd: BigDecimal?,
+    val crossType: BigDecimal?,
     val recommendYn: String
 )
