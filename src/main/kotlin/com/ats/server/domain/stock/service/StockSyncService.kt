@@ -3,7 +3,6 @@ package com.ats.server.domain.stock.service
 import com.ats.server.domain.stock.dto.StockCreateReq
 import com.ats.server.domain.stock.dto.StockFundamentalCreateReq
 import com.ats.server.domain.stock.dto.StockFundamentalUpdateReq
-import com.ats.server.domain.stock.repository.StockDailyRepository
 import com.ats.server.domain.stock.repository.StockMasterRepository
 import com.ats.server.infra.publicdata.client.PublicDataClient
 import com.ats.server.infra.publicdata.dto.PublicDataItem
@@ -14,7 +13,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional // 주의: 클래스 레벨 Transactional은 제거하거나 readOnly로 하고, 개별 메서드에 맡기는 게 좋음
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -24,44 +22,56 @@ import java.util.concurrent.atomic.AtomicInteger
 class StockSyncService(
     private val publicDataClient: PublicDataClient,
     private val stockMasterService: StockMasterService,
-    private val stockDailyService: StockDailyService,
     private val stockFundamentalService: StockFundamentalService,
-    private val stockDailyRepository: StockDailyRepository,
     private val stockMasterRepository: StockMasterRepository
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
+    private val semaphore = Semaphore(20) // DB 커넥션 풀 고려 (20~30)
 
-    // [설정] DB 커넥션 풀을 고려하여 동시 처리 개수 제한 (20~30 적당)
-    private val semaphore = Semaphore(20)
-
-    // =========================================================================
-    // 1. Stock Master & 시가총액 동기화 (Source: 공공데이터포털)
-    // =========================================================================
-    // [중요] 전체 로직을 Transactional로 묶지 않습니다. (병렬 처리 시 트랜잭션 전파 문제 방지)
     fun syncMasterByPublicData(): Int {
-        // 1. 데이터 가져오기 (여긴 네트워크 작업이므로 기존대로 수행)
+        // 1. 공공데이터 포털에서 최신 데이터 가져오기
         val items = findLatestPublicDataStocks()
 
         if (items.isEmpty()) {
-            throw RuntimeException("최근 1주일간 공공데이터 시세 정보가 없습니다. (API 키, 휴장일, 또는 시간 확인)")
+            throw RuntimeException("최근 1주일간 공공데이터 시세 정보가 없습니다.")
         }
 
-        log.info(">>> 동기화 시작: ${items.size}개 종목 병렬 처리")
+        // [최적화 핵심] 현재 DB에 있는 모든 종목 코드를 Set으로 가져옴 (DB 조회 1회)
+        // Set은 contains 검색 속도가 O(1)이라서 매우 빠름
+        val existingCodes = stockMasterRepository.findAllStockCodes().toSet()
 
-        // 2. 병렬 처리 준비
-        // 멀티 스레드 환경에서 안전하게 숫자를 세기 위해 AtomicInteger 사용
+        log.info(">>> 동기화 시작: ${items.size}개 종목 병렬 처리 (기존 종목: ${existingCodes.size}개)")
+
         val saveCount = AtomicInteger(0)
 
-        // 3. 코루틴 실행 (병렬)
+        // 2. 코루틴 병렬 처리 시작
         runBlocking(Dispatchers.IO) {
             items.forEach { item ->
                 launch {
-                    // 세마포어로 동시 DB 접근 제어
+                    // 세마포어로 동시 진입 제한 (DB 부하 방지)
                     semaphore.withPermit {
                         try {
-                            processStockItem(item)
-                            saveCount.incrementAndGet() // 성공 시 카운트 증가
+                            // "A005930" -> "005930"
+                            val cleanCode = if (item.srtnCd.startsWith("A")) item.srtnCd.substring(1) else item.srtnCd
+
+                            // [최적화] DB 쿼리(existsById) 없이 메모리에서 즉시 확인
+                            if (cleanCode !in existingCodes) {
+                                stockMasterService.createStock(
+                                    StockCreateReq(
+                                        stockCode = cleanCode,
+                                        stockName = item.itmsNm,
+                                        market = item.mrktCtg,
+                                        sector = null,
+                                        auditRisk = null
+                                    )
+                                )
+                            }
+
+                            // 시가총액 정보 업데이트 (이건 별도 함수 유지 추천)
+                            updateMarketCap(cleanCode, item.mrktTotAmt)
+
+                            saveCount.incrementAndGet()
                         } catch (e: Exception) {
                             log.error("Sync Error [${item.itmsNm}]: ${e.message}")
                         }
@@ -73,42 +83,12 @@ class StockSyncService(
         return saveCount.get()
     }
 
-    /**
-     * 개별 종목 처리 로직 분리
-     * (기존 for문 안의 내용을 함수로 뺌)
-     */
-    private fun processStockItem(item: PublicDataItem) {
-        // "A005930" -> "005930"
-        val cleanCode = if (item.srtnCd.startsWith("A")) item.srtnCd.substring(1) else item.srtnCd
-
-        // 1) 마스터 정보 저장 (없을 경우 생성)
-        // 주의: existsById와 createStock 사이에 아주 짧은 틈이 있지만, 마스터 데이터 특성상 충돌 확률 낮음
-        if (!stockMasterRepository.existsById(cleanCode)) {
-            stockMasterService.createStock(
-                StockCreateReq(
-                    stockCode = cleanCode,
-                    stockName = item.itmsNm,
-                    market = item.mrktCtg,
-                    sector = null,
-                    auditRisk = null
-                )
-            )
-        }
-
-        // 2) 시가총액(Fundamental) 저장
-        updateMarketCap(cleanCode, item.mrktTotAmt)
-    }
-
+    // 날짜별 데이터 찾기 로직
     private fun findLatestPublicDataStocks(): List<PublicDataItem> {
         var targetDate = LocalDate.now()
-
         for (i in 0..7) {
             val dateStr = targetDate.minusDays(i.toLong()).format(DateTimeFormatter.ofPattern("yyyyMMdd"))
-
-            // Client 내부에서 로깅 등 시간이 걸릴 수 있으므로, 필요하다면 여기도 Dispatchers.IO를 쓸 수 있지만
-            // 호출 횟수가 7번 이내라 그냥 둬도 무방합니다.
             val items = publicDataClient.getStockPriceInfo(dateStr, dateStr)
-
             if (items.isNotEmpty()) {
                 log.info("최신 데이터 발견: $dateStr (총 ${items.size} 종목)")
                 return items
@@ -117,6 +97,7 @@ class StockSyncService(
         return emptyList()
     }
 
+    // 시가총액 업데이트 로직 (코드가 길어서 따로 두는 게 좋음)
     private fun updateMarketCap(code: String, marketCapStr: String) {
         val marketCap = try { BigDecimal(marketCapStr) } catch (e: Exception) { BigDecimal.ZERO }
 
