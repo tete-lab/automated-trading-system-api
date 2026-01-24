@@ -23,7 +23,7 @@ class StockDailyCollector(
     // 10 ~ 20 정도가 적당해보임. 로그 보면서 조절 필요. (EOF가 잦으면 10 또는 5로 수정)
     private val limitSemaphore = Semaphore(20)
 
-    fun collectAll(targetDate: LocalDate) {
+    fun collectAll(targetDate: LocalDate, token: String) {
         val codes = stockMasterRepository.findAllStockCodes() // 전체 종목 코드 리스트 (약 2500개)
         val total = codes.size
         val successCount = AtomicInteger(0)
@@ -39,7 +39,7 @@ class StockDailyCollector(
                         // 세마포어로 동시 실행 개수 제한 (Rate Limiting)
                         limitSemaphore.withPermit {
                             try {
-                                val result = stockDailyService.fetchAndSaveDailyPrice(stockCode, targetDate)
+                                val result = stockDailyService.fetchAndSaveDailyPrice(stockCode, targetDate, token)
                                 if (result > 0) successCount.incrementAndGet()
                             } catch (e: Exception) {
                                 log.error("Error fetching $stockCode: ${e.message}")

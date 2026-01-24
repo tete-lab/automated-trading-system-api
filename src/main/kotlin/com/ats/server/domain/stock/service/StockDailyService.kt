@@ -14,10 +14,16 @@ import com.ats.server.infra.krx.client.KrxKosdaqClient
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
+import kotlinx.coroutines.*
 import java.time.format.DateTimeFormatter
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
+import org.springframework.data.domain.PageRequest
 import org.springframework.transaction.annotation.Propagation
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.system.measureTimeMillis
 
 
 @Service
@@ -33,22 +39,22 @@ class StockDailyService(
     // 로거 설정
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // [1] 토큰을 메모리에 저장할 전역 변수 (싱글톤이므로 유지됨)
-    private var cachedToken: String? = null
+
     /**
      * [Helper] 토큰 가져오기 (메모리 캐싱 적용)
      * - cachedToken이 있으면 DB 안 가고 바로 반환
      * - 없으면 DB 조회 후 메모리에 저장
      */
-    private fun getApiToken(): String {
-        if (cachedToken == null) {
+     fun getApiToken(): String {
+//        if (cachedToken == null) {
             log.info(">>> 키움 API 토큰이 메모리에 없어 DB에서 발급받습니다.")
             val req = TokenFindReq()
             // DB 조회 or API 발급
             val res = tokenService.getValidToken(req)
-            cachedToken = res.token
-        }
-        return cachedToken!!
+            return res.token
+//            cachedToken = res.token
+//        }
+//        return cachedToken!!
     }
     
     // 기간 조회 (차트 데이터)
@@ -143,13 +149,9 @@ class StockDailyService(
      */
     // [수정] 새로운 트랜잭션을 강제로 생성하여 Read-Only 설정을 무시하도록 함
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    fun fetchAndSaveDailyPrice(stockCode: String, targetDate: LocalDate): Int {
+    fun fetchAndSaveDailyPrice(stockCode: String, targetDate: LocalDate, token: String): Int {
 
-        // 1. 토큰 발급 (캐싱 로직은 Client 내부 혹은 여기서 처리)
-        val token = getApiToken()
-//        val req = TokenFindReq() // memberId는 기본값(null)으로 설정됨d
-//        val res = tokenService.getValidToken(req)
-//        val token = res.token
+
 
         // 2. 날짜 포맷 변환 (LocalDate -> yyyyMMdd)
         val formatter = DateTimeFormatter.ofPattern("yyyyMMdd")
@@ -163,7 +165,7 @@ class StockDailyService(
         log.info("fetchDailyPrice returnCode : [" + responseDto.returnCode + "], returnMsg : " + responseDto.returnMsg )
         val items = responseDto.dalyStkpc ?: return 0
 
-        // 5. [최적화] 해당 종목의 기존 데이터들(30일치 등)을 한 번에 조회하여 Map으로 변환
+        // 5. [최적화] 해당 종목의 기존 데이터들(20일치 등)을 한 번에 조회하여 Map으로 변환
         val dates = items.map { LocalDate.parse(it.date, formatter) }
         val minDate = dates.minOrNull() ?: return 0
         val maxDate = dates.maxOrNull() ?: return 0
@@ -273,4 +275,211 @@ class StockDailyService(
         log.info(">>> KRX 코스닥 수집 완료: {}건 저장됨", saveList.size)
         return saveList.size
     }
+
+    // 기간별 지표 계산 (Controller에서 호출)
+    suspend fun calculateIndicatorsForPeriod(startDate: LocalDate, endDate: LocalDate) {
+        var currentDate = startDate
+
+        // 시작일이 종료일보다 커질 때까지 반복
+        while (!currentDate.isAfter(endDate)) {
+            println("--- [진행중] $currentDate 지표 계산 ---")
+
+            // 기존의 하루치 계산 함수 재사용
+            calculateIndicators(currentDate)
+
+            // 하루 증가
+            currentDate = currentDate.plusDays(1)
+        }
+    }
+    // Controller에서 이 함수를 runBlocking 혹은 CoroutineScope로 호출해야 함
+    // 예: fun fetch(...) = runBlocking { service.calculateIndicators(date) }
+    suspend fun calculateIndicators(targetDate: LocalDate) = coroutineScope {
+        val targets = stockDailyRepository.findAllByBaseDate(targetDate)
+        println("지표 계산 시작: 총 ${targets.size}개 종목") // 로그 확인용
+
+        // 진행 상황 로깅용
+        val counter = AtomicInteger(0)
+        val total = targets.size
+
+        val time = measureTimeMillis {
+            // 1. 전체 종목을 100개씩 나눔 (DB 커넥션 풀 고갈 방지)
+            targets.chunked(100).forEach { batch ->
+                // 2. 각 배치를 병렬(async)로 처리
+                val jobs = batch.map { stock ->
+
+                    async(Dispatchers.IO) { // DB 작업이므로 IO Dispatcher 사용
+                        try {
+                            // 과거 데이터 조회
+                            val historyDesc = stockDailyRepository.findPriceHistory(
+                                stock.stockCode,
+                                targetDate,
+                                PageRequest.of(0, 100)
+                            )
+//                            log.info("[tgkim checking] " + stock.stockCode + " / " + stock.baseDate)
+//                            log.info("size : " + historyDesc.size)
+                            if (historyDesc.size >= 30) {
+                                val history = historyDesc.reversed()
+                                val closePrices = history.map { it.closePrice.toDouble() }
+//                                log.info("closePrices : " + closePrices)
+                                // 지수 계산 로직 (기존 함수 재사용)
+                                val sma20 = calculateSma(closePrices, 20)
+//                                log.info("sma20 : " + sma20)
+
+                                val sma50 = calculateSma(closePrices, 50)
+                                val ema9 = calculateEma(closePrices, 9)
+                                val ema12 = calculateEma(closePrices, 12)
+                                val ema26 = calculateEma(closePrices, 26)
+                                val rsi = calculateRsi(closePrices, 14)
+                                val (macd, signal) = calculateMacd(closePrices)
+                                // val crossType = determineCrossType(...)
+
+                                // Entity 업데이트
+                                stock.apply {
+                                    this.sma20 = sma20?.toBigDecimal()
+                                    this.sma50 = sma50?.toBigDecimal()
+                                    this.ema9 = ema9?.toBigDecimal()
+                                    this.ema12 = ema12?.toBigDecimal()
+                                    this.ema26 = ema26?.toBigDecimal()
+                                    this.rsi = rsi?.toBigDecimal()
+                                    this.macd = macd?.toBigDecimal()
+                                    this.signalLine = signal?.toBigDecimal()
+                                }
+
+                                // ★ 병렬 환경에서는 명시적 save 권장 (변경감지 트랜잭션 범위 애매할 수 있음)
+                                stockDailyRepository.save(stock)
+                            }
+                        } catch (e: Exception) {
+                            println("Error calculating for ${stock.stockCode}: ${e.message}")
+                        } finally {
+                            counter.incrementAndGet()
+                        }
+                    }
+                }
+                // 현재 배치의 모든 작업이 끝날 때까지 대기
+                jobs.awaitAll()
+                println("배치(100개) 처리 완료..") // 진행 상황 모니터링
+            }
+        }
+
+        println("지표 계산 완료. 소요 시간: ${time}ms")
+    }
+
+    // 1. SMA (단순 이동평균)
+    private fun calculateSma(prices: List<Double>, period: Int): Double? {
+        if (prices.size < period) return null
+        // 마지막 날짜 기준 period 만큼 잘라서 평균
+        return prices.takeLast(period).average()
+    }
+
+    // 2. EMA (지수 이동평균) - Python ewm(adjust=False) 로직
+    private fun calculateEma(prices: List<Double>, period: Int): Double? {
+        if (prices.size < period) return null
+
+        val alpha = 2.0 / (period + 1.0)
+        var ema = prices[0] // 초기값은 첫 데이터 (혹은 SMA로 시작하기도 함)
+
+        // 전체 데이터를 순회하며 EMA 누적 계산
+        for (i in 1 until prices.size) {
+            ema = (prices[i] * alpha) + (ema * (1 - alpha))
+        }
+        return ema
+    }
+
+    // List 전체의 EMA 시리즈를 반환 (MACD 계산용)
+    private fun calculateEmaSeries(prices: List<Double>, period: Int): List<Double> {
+        if (prices.isEmpty()) return emptyList()
+
+        val alpha = 2.0 / (period + 1.0)
+        val result = ArrayList<Double>()
+        var ema = prices[0]
+        result.add(ema)
+
+        for (i in 1 until prices.size) {
+            ema = (prices[i] * alpha) + (ema * (1 - alpha))
+            result.add(ema)
+        }
+        return result
+    }
+
+    // 3. RSI (상대강도지수) - Python rolling mean 로직
+    private fun calculateRsi(prices: List<Double>, period: Int): Double? {
+        if (prices.size <= period) return null
+
+        // 등락폭 계산
+        val deltas = prices.zipWithNext { a, b -> b - a } // b가 오늘, a가 어제
+
+        // 최근 period 기간의 상승폭/하락폭 평균 (SMA 방식)
+        val relevantDeltas = deltas.takeLast(period)
+
+        val gains = relevantDeltas.map { if (it > 0) it else 0.0 }.average()
+        val losses = relevantDeltas.map { if (it < 0) -it else 0.0 }.average()
+
+        if (losses == 0.0) return 100.0 // 하락이 없으면 RSI 100
+
+        val rs = gains / losses
+        return 100.0 - (100.0 / (1.0 + rs))
+    }
+
+    // 4. MACD & Signal
+    private fun calculateMacd(prices: List<Double>): Pair<Double?, Double?> {
+        if (prices.size < 26) return Pair(null, null)
+
+        // 전체 기간에 대한 EMA 시리즈 생성
+        val ema12Series = calculateEmaSeries(prices, 12)
+        val ema26Series = calculateEmaSeries(prices, 26)
+
+        // MACD Series = EMA12 - EMA26
+        val macdSeries = ema12Series.zip(ema26Series) { e12, e26 -> e12 - e26 }
+
+        // 현재(마지막) MACD 값
+        val currentMacd = macdSeries.last()
+
+        // Signal Line = MACD Series의 9일 EMA
+        // Signal 계산을 위해 MACD Series 자체를 EMA 함수에 넣음
+        val currentSignal = calculateEma(macdSeries, 9)
+
+        return Pair(currentMacd, currentSignal)
+    }
+
+    // 5. 골든크로스/데드크로스 판별
+    // DB 컬럼이 cross_type (String 혹은 Decimal) 인지에 따라 리턴타입 조정 필요
+    // 여기서는 문자열이나 코드로 반환한다고 가정 (예: 1=Golden, -1=Dead, 0=None)
+    private fun determineCrossType(history: List<StockDaily>, currentMacd: Double?, currentSignal: Double?): BigDecimal? {
+        if (currentMacd == null || currentSignal == null || history.size < 2) return null
+
+        // 어제 날짜의 지표가 필요함.
+        // history는 reversed된 상태(오래된 것 -> 최신)라고 가정했을 때:
+        // prices 리스트를 다시 계산하거나, DB에 저장된 어제 값을 써야 함.
+        // 정확성을 위해 방금 계산한 로직을 어제 기준으로도 한번 더 수행하는 것이 가장 정확함.
+        // 하지만 성능상 여기서는 DB에 저장된 어제 값을 믿거나,
+        // MACD Series의 끝에서 두번째 값을 가져오는 방식을 추천함.
+
+        // 로직 단순화를 위해:
+        // 오늘: MACD > Signal (정배열)
+        // 어제: MACD < Signal (역배열 이었음)
+        // => 골든 크로스
+
+        // *주의: calculateMacd 함수 내부에서 macdSeries 전체를 구했으므로 그걸 활용하면 좋음.
+        // 코드를 간결하게 유지하기 위해 여기서는 "현재 상태"만 우선 저장하거나
+        // 정밀 계산이 필요하면 calculateMacd에서 (오늘, 어제) 값을 모두 리턴하도록 수정해야 함.
+
+        // 약식 구현 (현재 상태 기준):
+        // DB 테이블의 cross_type이 숫자인지 문자인지 확인 필요.
+        // 질문의 테이블 스키마: `cross_type` decimal(10,2) -> 숫자로 가정 (1: Golden, 2: Dead 등)
+
+        val diff = currentMacd - currentSignal
+
+        // 단순히 오늘 상태만 기록한다면:
+        // return if (diff > 0) BigDecimal("1") else BigDecimal("-1")
+
+        // 크로스 '발생' 시점을 기록하려면 어제 데이터를 알아야 함.
+        // 편의상 이 예제에서는 null 처리 혹은 추후 고도화 영역으로 둡니다.
+        return null
+    }
+
+    // BigDecimal 변환 헬퍼 (null 처리 및 소수점 반올림)
+    private fun Double.toBigDecimal(): BigDecimal {
+        return BigDecimal.valueOf(this).setScale(2, RoundingMode.HALF_UP)
+    }
+
 }
