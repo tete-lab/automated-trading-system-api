@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -36,7 +37,7 @@ class TokenService(
      * Input: TokenFindReq (memberId 포함)
      * Output: TokenRes (Token 정보)
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun getValidToken(req: TokenFindReq): TokenRes {
         // [수정됨] 입력값 전처리: "string"이나 공백이 들어오면 null(시스템 토큰)로 처리
         val memberId: String? = if (req.memberId.isNullOrBlank() || req.memberId == "string") {
