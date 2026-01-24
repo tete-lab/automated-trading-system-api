@@ -1,90 +1,94 @@
 package com.ats.server.domain.stock.service
 
 import com.ats.server.domain.stock.dto.StockCreateReq
-import com.ats.server.domain.stock.dto.StockDailyCreateReq
 import com.ats.server.domain.stock.dto.StockFundamentalCreateReq
 import com.ats.server.domain.stock.dto.StockFundamentalUpdateReq
-import com.ats.server.domain.stock.repository.StockDailyRepository
 import com.ats.server.domain.stock.repository.StockMasterRepository
 import com.ats.server.infra.publicdata.client.PublicDataClient
 import com.ats.server.infra.publicdata.dto.PublicDataItem
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicInteger
 
 @Service
 class StockSyncService(
     private val publicDataClient: PublicDataClient,
     private val stockMasterService: StockMasterService,
-    private val stockDailyService: StockDailyService,
     private val stockFundamentalService: StockFundamentalService,
-    private val stockDailyRepository: StockDailyRepository,
     private val stockMasterRepository: StockMasterRepository
 ) {
 
-    // 로거 설정
     private val log = LoggerFactory.getLogger(javaClass)
-    // =========================================================================
-    // 1. Stock Master & 시가총액 동기화 (Source: 공공데이터포털)
-    // =========================================================================
+    private val semaphore = Semaphore(20) // DB 커넥션 풀 고려 (20~30)
+
     fun syncMasterByPublicData(): Int {
-        // [수정됨] 최근 영업일 데이터 찾기 로직 간소화
+        // 1. 공공데이터 포털에서 최신 데이터 가져오기
         val items = findLatestPublicDataStocks()
 
         if (items.isEmpty()) {
-            throw RuntimeException("최근 1주일간 공공데이터 시세 정보가 없습니다. (API 키, 휴장일, 또는 시간 확인)")
+            throw RuntimeException("최근 1주일간 공공데이터 시세 정보가 없습니다.")
         }
 
-        var saveCount = 0
-        for (item in items) {
-            try {
-                // "A005930" -> "005930"
-                val cleanCode = if (item.srtnCd.startsWith("A")) item.srtnCd.substring(1) else item.srtnCd
+        // [최적화 핵심] 현재 DB에 있는 모든 종목 코드를 Set으로 가져옴 (DB 조회 1회)
+        // Set은 contains 검색 속도가 O(1)이라서 매우 빠름
+        val existingCodes = stockMasterRepository.findAllStockCodes().toSet()
 
-                // 1) 마스터 정보 저장 (없을 경우 생성)
-                if (!stockMasterRepository.existsById(cleanCode)) {
-                    stockMasterService.createStock(
-                        StockCreateReq(
-                            stockCode = cleanCode,
-                            stockName = item.itmsNm,
-                            market = item.mrktCtg,
-                            sector = null, // 공공데이터 미제공
-                            auditRisk = null
-                        )
-                    )
+        log.info(">>> 동기화 시작: ${items.size}개 종목 병렬 처리 (기존 종목: ${existingCodes.size}개)")
+
+        val saveCount = AtomicInteger(0)
+
+        // 2. 코루틴 병렬 처리 시작
+        runBlocking(Dispatchers.IO) {
+            items.forEach { item ->
+                launch {
+                    // 세마포어로 동시 진입 제한 (DB 부하 방지)
+                    semaphore.withPermit {
+                        try {
+                            // "A005930" -> "005930"
+                            val cleanCode = if (item.srtnCd.startsWith("A")) item.srtnCd.substring(1) else item.srtnCd
+
+                            // [최적화] DB 쿼리(existsById) 없이 메모리에서 즉시 확인
+                            if (cleanCode !in existingCodes) {
+                                stockMasterService.createStock(
+                                    StockCreateReq(
+                                        stockCode = cleanCode,
+                                        stockName = item.itmsNm,
+                                        market = item.mrktCtg,
+                                        sector = null,
+                                        auditRisk = null
+                                    )
+                                )
+                            }
+
+                            // 시가총액 정보 업데이트 (이건 별도 함수 유지 추천)
+                            updateMarketCap(cleanCode, item.mrktTotAmt)
+
+                            saveCount.incrementAndGet()
+                        } catch (e: Exception) {
+                            log.error("Sync Error [${item.itmsNm}]: ${e.message}")
+                        }
+                    }
                 }
-
-                // 2) 시가총액(Fundamental) 저장
-                updateMarketCap(cleanCode, item.mrktTotAmt)
-
-                saveCount++
-            } catch (e: Exception) {
-                // 로그만 찍고 계속 진행
-                log.info("Sync Error [${item.itmsNm}]: ${e.message}")
             }
         }
-        return saveCount
+
+        return saveCount.get()
     }
 
-    /**
-     * [핵심 변경]
-     * 이제 publicDataClient.getStockPriceInfo 하나로 해결합니다.
-     * 날짜를 하루씩 줄여가며 호출해보고, 데이터가 나오면 그 리스트(전체 페이지 포함)를 반환합니다.
-     */
+    // 날짜별 데이터 찾기 로직
     private fun findLatestPublicDataStocks(): List<PublicDataItem> {
         var targetDate = LocalDate.now()
-
-        // 오늘 데이터가 아직 안 나왔을 수 있으니(장 중이거나 아침), 최대 7일 전까지 뒤져봅니다.
         for (i in 0..7) {
             val dateStr = targetDate.minusDays(i.toLong()).format(DateTimeFormatter.ofPattern("yyyyMMdd"))
-
-            // [중요] 시작일=dateStr, 종료일=dateStr 로 호출하면 -> "해당 날짜의 전 종목"을 가져옵니다.
-            // Client 내부에서 while 루프로 모든 페이지를 긁어오므로 여기서 페이징 신경 쓸 필요 X
             val items = publicDataClient.getStockPriceInfo(dateStr, dateStr)
-
             if (items.isNotEmpty()) {
                 log.info("최신 데이터 발견: $dateStr (총 ${items.size} 종목)")
                 return items
@@ -93,7 +97,7 @@ class StockSyncService(
         return emptyList()
     }
 
-    // 시가총액 저장 로직 (이전과 동일)
+    // 시가총액 업데이트 로직 (코드가 길어서 따로 두는 게 좋음)
     private fun updateMarketCap(code: String, marketCapStr: String) {
         val marketCap = try { BigDecimal(marketCapStr) } catch (e: Exception) { BigDecimal.ZERO }
 
@@ -119,6 +123,4 @@ class StockSyncService(
             )
         }
     }
-
-
 }
