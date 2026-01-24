@@ -11,7 +11,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
-@Tag(name = "04. 종목 (Stock)", description = "주식 종목 마스터 관리")
+@Tag(name = "04. 종목 (StockMaster)", description = "주식 종목 마스터 관리")
 @RestController
 @RequestMapping("/api/v1/stocks")
 class StockMasterController(
