@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
+import kotlinx.coroutines.*
 import org.springframework.format.annotation.DateTimeFormat
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -48,6 +49,40 @@ class StockDailyController(
         @RequestBody req: StockDailyUpdateReq
     ): ResponseEntity<Long> {
         return ResponseEntity.ok(stockDailyService.updateDaily(stockCode, baseDate, req))
+    }
+
+    @Operation(summary = "3. 지수 계산 요청 (기간 설정)", description = "시작일부터 종료일까지의 지수를 백그라운드에서 순차적으로 계산합니다.")
+    @PostMapping("/calculate-indicators")
+    fun calculateIndicators(
+        @Parameter(description = "시작일 (yyyyMMdd)", example = "20260101")
+        @RequestParam @DateTimeFormat(pattern = "yyyyMMdd") startDate: LocalDate,
+
+        @Parameter(description = "종료일 (yyyyMMdd)", example = "20260131")
+        @RequestParam @DateTimeFormat(pattern = "yyyyMMdd") endDate: LocalDate
+    ): ResponseEntity<String> {
+
+        // 1. 날짜 유효성 검증
+        if (startDate.isAfter(endDate)) {
+            return ResponseEntity.badRequest().body("시작일이 종료일보다 늦을 수 없습니다.")
+        }
+
+        // 2. 별도의 스코프에서 백그라운드 실행
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                println(">>> 백그라운드 기간 지표 계산 시작 ($startDate ~ $endDate) <<<")
+
+                // 서비스의 기간 처리 함수 호출
+                stockDailyService.calculateIndicatorsForPeriod(startDate, endDate)
+
+                println(">>> 백그라운드 기간 지표 계산 전체 완료 ($startDate ~ $endDate) <<<")
+            } catch (e: Exception) {
+                println(">>> 지표 계산 중 에러 발생: ${e.message}")
+                e.printStackTrace()
+            }
+        }
+
+        // 3. 즉시 응답 반환
+        return ResponseEntity.ok("기간 지표 계산 요청이 백그라운드에서 시작되었습니다. ($startDate ~ $endDate)")
     }
 
 
