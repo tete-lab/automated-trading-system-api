@@ -6,15 +6,27 @@ import com.ats.server.domain.stock.dto.StockFundamentalUpdateReq
 import com.ats.server.domain.stock.entity.StockFundamental
 import com.ats.server.domain.stock.repository.StockFundamentalRepository
 import com.ats.server.domain.stock.repository.StockMasterRepository
+import com.ats.server.infra.kiwoom.client.KiwoomClient
+import com.ats.server.infra.kiwoom.dto.KiwoomFundamentalResponse
+import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.delay
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 
 @Service
 @Transactional(readOnly = true)
 class StockFundamentalService(
     private val fundamentalRepository: StockFundamentalRepository,
-    private val stockMasterRepository: StockMasterRepository // 종목 존재 여부 확인용
+    private val stockMasterRepository: StockMasterRepository, // 종목 존재 여부 확인용
+    private val kiwoomClient: KiwoomClient,
+    private val objectMapper: ObjectMapper,
+    private val stockFundamentalRepository: StockFundamentalRepository
 ) {
+    // 로거 설정
+    private val log = LoggerFactory.getLogger(javaClass)
 
     // 조회
     fun getFundamental(stockCode: String): StockFundamentalRes {
@@ -85,4 +97,92 @@ class StockFundamentalService(
         divPayDate = entity.divPayDate,
         updatedAt = entity.updatedAt.toString()
     )
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    suspend fun fetchAndSaveFundamental(stockCode: String, token: String): Int {
+        var nextKey: String? = null
+        var totalUpdateCount = 0
+
+        // [Loop] 연속 데이터가 없을 때까지 반복
+        do {
+            try {
+                // 1. API 호출 (nextKey 전달)
+                val result = kiwoomClient.fetchStockFundamental(token, stockCode, nextKey)
+
+                // 2. Body 파싱
+                val dto = objectMapper.readValue(result.body, KiwoomFundamentalResponse::class.java)
+
+                if (dto.returnCode != "0") {
+                    log.warn("Kiwoom API Error [$stockCode]: ${dto.returnMsg}")
+                    break // 에러 나면 루프 중단
+                }
+
+                // 3. 데이터 저장 (Upsert)
+                saveToDb(stockCode, dto)
+                totalUpdateCount++
+
+                // 4. 다음 키 설정 (없으면 null이 되어 루프 종료)
+                nextKey = if (result.hasNext) result.nextKey else null
+
+                // [안전장치] 너무 빠른 연속 호출 방지 (필요 시)
+                if (nextKey != null) delay(50)
+
+            } catch (e: Exception) {
+                log.error("Failed to fetch fundamental for $stockCode : ${e.message}")
+                break
+            }
+        } while (nextKey != null) // nextKey가 있는 동안 계속 돕니다.
+
+        return totalUpdateCount
+    }
+
+    private fun saveToDb(stockCode: String, dto: KiwoomFundamentalResponse) {
+        val marketCap = toBigDecimal(dto.marketCap)
+        val avgVolume = toBigDecimal(dto.trdeQty)
+        val per = toBigDecimal(dto.per)
+        val pbr = toBigDecimal(dto.pbr)
+        val psr = toBigDecimal("0")
+        val eps = toBigDecimal(dto.eps)
+        val bps = toBigDecimal(dto.bps)
+        val roe = toBigDecimal(dto.roe)
+        val revenueGrowth = null
+        val divYield = null
+        val divRate = null
+        val divPayDate = null
+
+        val entity = stockFundamentalRepository.findById(stockCode).orElse(null)
+
+        if (entity != null) {
+
+            entity.update(marketCap, avgVolume, per, pbr, psr, eps, bps, roe, revenueGrowth, divYield, divRate, divPayDate)
+        } else {
+            val newEntity = StockFundamental(
+                stockCode = stockCode,
+                marketCap = marketCap,
+                avgVolume = avgVolume,
+                per = per,
+                pbr = pbr,
+                psr = psr,
+                eps = eps,
+                bps = bps,
+                roe = roe,
+                revenueGrowth = revenueGrowth,
+                divYield = divYield,
+                divRate = divRate,
+                divPayDate = divPayDate
+            )
+            stockFundamentalRepository.save(newEntity)
+        }
+    }
+
+    // 빈 문자열 안전하게 BigDecimal로 변환하는 유틸
+    private fun toBigDecimal(value: String?): BigDecimal? {
+        if (value.isNullOrBlank()) return null
+        return try {
+            // 콤마 제거 등 전처리 필요시 추가
+            BigDecimal(value.trim())
+        } catch (e: NumberFormatException) {
+            null
+        }
+    }
 }

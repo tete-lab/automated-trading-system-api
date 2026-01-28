@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
-@Tag(name = "98. Kiwoom Token 발급", description = "키움 토큰 발급")
+@Tag(name = "98. 증권사 API Token 발급", description = "증권사 API 토큰 발급")
 @RestController
 @RequestMapping("/api/v1/token")
 class TokenController(
@@ -19,7 +19,7 @@ class TokenController(
 ) {
 
     @Operation(
-        summary = "2. 키움 토큰 발급 (시스템/사용자)",
+        summary = "1. 증권사 API 토큰 발급 (시스템/사용자)",
         description = "토큰 유효성을 확인하고 필요 시 재발급합니다. Request Body에 memberId가 있으면 해당 사용자 토큰을, 없으면 시스템 토큰을 처리합니다."
     )
     @PostMapping("/validToken")

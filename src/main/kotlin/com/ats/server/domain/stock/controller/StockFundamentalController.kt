@@ -3,6 +3,8 @@ package com.ats.server.domain.stock.controller
 import com.ats.server.domain.stock.dto.StockFundamentalCreateReq
 import com.ats.server.domain.stock.dto.StockFundamentalRes
 import com.ats.server.domain.stock.dto.StockFundamentalUpdateReq
+import com.ats.server.domain.stock.service.StockDailyService
+import com.ats.server.domain.stock.service.StockFundamentalCollector
 import com.ats.server.domain.stock.service.StockFundamentalService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -15,7 +17,9 @@ import org.springframework.web.bind.annotation.*
 @RestController
 @RequestMapping("/api/v1/stock-fundamentals")
 class StockFundamentalController(
-    private val fundamentalService: StockFundamentalService
+    private val fundamentalService: StockFundamentalService,
+    private val stockDailyService: StockDailyService,
+    private val stockFundamentalCollector: StockFundamentalCollector
 ) {
 
     @Operation(summary = "분석 정보 조회", description = "특정 종목의 재무 지표를 조회합니다.")
@@ -39,4 +43,6 @@ class StockFundamentalController(
     ): ResponseEntity<String> {
         return ResponseEntity.ok(fundamentalService.updateFundamental(stockCode, req))
     }
+
+
 }
