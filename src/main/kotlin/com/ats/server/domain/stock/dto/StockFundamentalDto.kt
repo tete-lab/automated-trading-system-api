@@ -13,7 +13,7 @@ data class StockFundamentalCreateReq(
     @field:Schema(description = "시가총액", example = "450000000000000")
     val marketCap: BigDecimal?,
     @field:Schema(description = "평균 거래량", example = "15000000")
-    val avgVolume: Long?,
+    val avgVolume: BigDecimal?,
 
     @field:Schema(description = "PER", example = "15.5")
     val per: BigDecimal?,
@@ -43,7 +43,7 @@ data class StockFundamentalCreateReq(
 // 업데이트용 DTO (PK인 stockCode 제외)
 data class StockFundamentalUpdateReq(
     val marketCap: BigDecimal?,
-    val avgVolume: Long?,
+    val avgVolume: BigDecimal?,
     val per: BigDecimal?,
     val pbr: BigDecimal?,
     val psr: BigDecimal?,
@@ -59,7 +59,7 @@ data class StockFundamentalUpdateReq(
 data class StockFundamentalRes(
     val stockCode: String,
     val marketCap: BigDecimal?,
-    val avgVolume: Long?,
+    val avgVolume: BigDecimal?,
     val per: BigDecimal?,
     val pbr: BigDecimal?,
     val psr: BigDecimal?,

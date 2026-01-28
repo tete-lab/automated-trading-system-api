@@ -7,8 +7,12 @@ import com.ats.server.domain.stock.entity.StockDaily
 import com.ats.server.domain.stock.repository.StockDailyRepository
 import com.ats.server.domain.stock.repository.StockMasterRepository
 import com.ats.server.domain.token.dto.TokenFindReq
+import com.ats.server.domain.token.dto.TokenRes
 import com.ats.server.domain.token.service.TokenService
+import com.ats.server.infra.kis.client.KisClient
+import com.ats.server.infra.kis.dto.KisPeriodPriceResponse
 import com.ats.server.infra.kiwoom.client.KiwoomClient
+import com.ats.server.infra.kiwoom.dto.KiwoomDailyItem
 import com.ats.server.infra.kiwoom.dto.KiwoomDailyPriceResponse
 import com.ats.server.infra.krx.client.KrxKosdaqClient
 import org.springframework.stereotype.Service
@@ -34,7 +38,8 @@ class StockDailyService(
     private val tokenService: TokenService,
     private val kiwoomClient: KiwoomClient,
     private val objectMapper: ObjectMapper, // JSON 파싱용
-    private val krxKosdaqClient: KrxKosdaqClient
+    private val krxKosdaqClient: KrxKosdaqClient,
+    private val kisClient: KisClient
 ) {
     // 로거 설정
     private val log = LoggerFactory.getLogger(javaClass)
@@ -45,10 +50,10 @@ class StockDailyService(
      * - cachedToken이 있으면 DB 안 가고 바로 반환
      * - 없으면 DB 조회 후 메모리에 저장
      */
-     fun getApiToken(): String {
+     fun getApiToken(apiName: String): String {
 //        if (cachedToken == null) {
             log.info(">>> 키움 API 토큰이 메모리에 없어 DB에서 발급받습니다.")
-            val req = TokenFindReq()
+            val req = TokenFindReq(null, apiName)
             // DB 조회 or API 발급
             val res = tokenService.getValidToken(req)
             return res.token
@@ -145,55 +150,99 @@ class StockDailyService(
 
 
     /**
-     * [추가] 키움증권 API를 통해 일별 시세를 가져와서 DB에 저장/갱신 (Upsert)
+     * [키움증권 API] 일별 시세 수집 (연속 조회 + Bulk Upsert)
      */
-    // [수정] 새로운 트랜잭션을 강제로 생성하여 Read-Only 설정을 무시하도록 함
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    fun fetchAndSaveDailyPrice(stockCode: String, targetDate: LocalDate, token: String): Int {
-
-
-
-        // 2. 날짜 포맷 변환 (LocalDate -> yyyyMMdd)
+    suspend fun fetchAndSaveDailyPrice(stockCode: String, targetDate: LocalDate, token: String): Int {
         val formatter = DateTimeFormatter.ofPattern("yyyyMMdd")
         val strTarget = targetDate.format(formatter)
 
-        // 3. API 호출
-        val jsonResponse = kiwoomClient.fetchDailyPrice(token, stockCode, strTarget)
-        // 4. 응답 파싱
-        val responseDto = objectMapper.readValue(jsonResponse, KiwoomDailyPriceResponse::class.java)
+        // 1. [Pagination] 모든 페이지의 데이터를 메모리에 수집
+        // 사용자님 DTO인 KiwoomDailyItem 사용
+//        val accumulatedItems = mutableListOf<StockDaily>()
+        val accumulatedItems = mutableListOf<KiwoomDailyItem>()
+        var nextKey: String? = null
+        var loopCount = 0
+        val maxLoop = 20 // 안전장치: 최대 20페이지(약 300일치)까지만 조회 (필요 시 조절)
 
-        log.info("fetchDailyPrice returnCode : [" + responseDto.returnCode + "], returnMsg : " + responseDto.returnMsg )
-        val items = responseDto.dalyStkpc ?: return 0
+        do {
+            try {
+                // API 호출 (KiwoomClient가 Header 정보도 주는 KiwoomApiResult를 반환해야 함)
+                val result = kiwoomClient.fetchDailyPrice(token, stockCode, strTarget, nextKey)
 
-        // 5. [최적화] 해당 종목의 기존 데이터들(20일치 등)을 한 번에 조회하여 Map으로 변환
-        val dates = items.map { LocalDate.parse(it.date, formatter) }
+                // 응답 파싱
+                val responseDto = objectMapper.readValue(result.body, KiwoomDailyPriceResponse::class.java)
+
+                if (responseDto.returnCode != "0") {
+                    log.warn("Kiwoom API Error [$stockCode]: ${responseDto.returnMsg}")
+                    break
+                }
+
+                // 데이터 적재 (null safe)
+                responseDto.dalyStkpc?.let {
+                    accumulatedItems.addAll(it)
+                }
+
+                // 다음 키 갱신
+                nextKey = if (result.hasNext) result.nextKey else null
+
+                // [속도 제어] 연속 호출 시 서버 부하 방지
+                if (nextKey != null) {
+                    delay(50)
+                    loopCount++
+                }
+
+            } catch (e: Exception) {
+                log.error("Fetch Loop Error [$stockCode]: ${e.message}")
+                break
+            }
+        } while (nextKey != null && loopCount < maxLoop)
+
+        // 수집된 데이터가 없으면 종료
+        if (accumulatedItems.isEmpty()) return 0
+
+        log.info(">>> [$stockCode] 총 ${accumulatedItems.size}건 데이터 수집 완료. DB 병합 시작.")
+
+
+        // 2. [최적화] Bulk Upsert 로직
+        // 수집된 전체 데이터의 날짜 범위를 구함
+        val dates = accumulatedItems.map { LocalDate.parse(it.date, formatter) }
         val minDate = dates.minOrNull() ?: return 0
         val maxDate = dates.maxOrNull() ?: return 0
 
+        // DB에서 해당 범위의 기존 데이터를 한 번에 조회 (Map으로 변환)
         val existingMap = stockDailyRepository.findAllByStockCodeAndBaseDateBetweenOrderByBaseDateAsc(
             stockCode, minDate, maxDate
         ).associateBy { it.baseDate }
 
-        // 3. 메모리 내에서 비교 및 엔티티 준비
         val saveList = mutableListOf<StockDaily>()
 
-        items.forEach { item ->
+        accumulatedItems.forEach { item ->
             val baseDate = LocalDate.parse(item.date, formatter)
             val existingEntity = existingMap[baseDate]
 
+            // [데이터 변환] DTO의 String 타입 필드들을 DB 타입에 맞게 파싱
+            // KiwoomDailyItem에 정의된 closePrice는 BigDecimal getter가 있으므로 바로 사용
+            val volumeVal = item.volume ?: 0L
+            val volumePriceVal = item.volumePrice
+            val flucRateVal = item.fluctuationRate // "0.56" -> 0.56
+            val indivBuyVal = item.individualBuy     // "+1,000" -> 1000
+            val orgBuyVal = item.organBuy
+            val forBuyVal = item.foreignerBuy
+
             if (existingEntity != null) {
-                // [Update] 메모리에 있는 엔티티 수정
+                // [Update]
                 existingEntity.update(
-                    closePrice = item.closePrice,
+                    closePrice = item.closePrice, // DTO Helper 사용
                     openPrice = item.openPrice,
                     highPrice = item.highPrice,
                     lowPrice = item.lowPrice,
-                    volume = item.volume,
-                    volumePrice = item.volumePrice,
-                    fluctuationRate = item.fluctuationRate,
-                    individualBuy = item.individualBuy,
-                    organBuy = item.organBuy,
-                    foreignerBuy = item.foreignerBuy,
+                    volume = volumeVal,
+                    volumePrice = volumePriceVal,
+                    fluctuationRate = flucRateVal, // Double? or String? Entity 타입에 맞춤
+                    individualBuy = indivBuyVal,
+                    organBuy = orgBuyVal,
+                    foreignerBuy = forBuyVal,
                     // 기존 지표 유지
                     sma20 = existingEntity.sma20, sma50 = existingEntity.sma50,
                     ema9 = existingEntity.ema9, ema12 = existingEntity.ema12,
@@ -203,7 +252,7 @@ class StockDailyService(
                 )
                 saveList.add(existingEntity)
             } else {
-                // [Insert] 새 엔티티 생성
+                // [Insert]
                 saveList.add(StockDaily(
                     stockCode = stockCode,
                     baseDate = baseDate,
@@ -211,22 +260,43 @@ class StockDailyService(
                     openPrice = item.openPrice,
                     highPrice = item.highPrice,
                     lowPrice = item.lowPrice,
-                    volume = item.volume,
-                    volumePrice = item.volumePrice,
-                    fluctuationRate = item.fluctuationRate,
-                    individualBuy = item.individualBuy,
-                    organBuy = item.organBuy,
-                    foreignerBuy = item.foreignerBuy
+                    volume = volumeVal,
+                    volumePrice = volumePriceVal,
+                    fluctuationRate = flucRateVal,
+                    individualBuy = indivBuyVal,
+                    organBuy = orgBuyVal,
+                    foreignerBuy = forBuyVal
                 ))
             }
         }
 
-        // 4. [최적화] saveAll을 통해 벌크 저장 (DB 쓰기 횟수 단축)
-        stockDailyRepository.saveAll(saveList)
+        // 3. 일괄 저장
+        if (saveList.isNotEmpty()) {
+            stockDailyRepository.saveAll(saveList)
+        }
 
         log.info(">>> [SUCCESS] 종목: $stockCode, 처리 건수: ${saveList.size}")
         return saveList.size
+    }
 
+    // [Helper] 문자열(예: "+1,000", "-500", "")을 Long으로 안전하게 변환
+    private fun parseLong(value: String?): Long {
+        if (value.isNullOrBlank()) return 0L
+        return try {
+            value.replace(",", "").replace("+", "").toLong()
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
+    // [Helper] 문자열(예: "-0.56", "3.2")을 Double로 변환
+    private fun parseDouble(value: String?): Double {
+        if (value.isNullOrBlank()) return 0.0
+        return try {
+            value.replace("%", "").toDouble()
+        } catch (e: Exception) {
+            0.0
+        }
     }
 
     /**
@@ -480,6 +550,92 @@ class StockDailyService(
     // BigDecimal 변환 헬퍼 (null 처리 및 소수점 반올림)
     private fun Double.toBigDecimal(): BigDecimal {
         return BigDecimal.valueOf(this).setScale(2, RoundingMode.HALF_UP)
+    }
+
+
+    /**
+     * [한국투자증권] 기간별 시세 수집 (Start ~ End)
+     * - API: FHKST03010100
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    suspend fun fetchAndSavePeriodDailyPriceFromKis(
+        stockCode: String,
+        startDate: LocalDate,
+        endDate: LocalDate,
+        token: String
+    ): Int {
+        val formatter = DateTimeFormatter.ofPattern("yyyyMMdd")
+        val strStart = startDate.format(formatter)
+        val strEnd = endDate.format(formatter)
+
+        val (appKey, appSecret) = tokenService.getAppKeys(null, "KIS")
+        // 1. API 호출
+        val result = kisClient.fetchPeriodPrice(token, appKey, appSecret, stockCode, strStart, strEnd)
+
+        // 2. 파싱 (Output2를 사용하는 DTO)
+        val response = objectMapper.readValue(result.body, KisPeriodPriceResponse::class.java)
+
+        if (response.returnCode != "0") {
+            log.warn("KIS API Error [$stockCode]: ${response.message}")
+            return 0
+        }
+
+        val items = response.output ?: emptyList()
+        if (items.isEmpty()) return 0
+
+        // 3. Bulk Upsert 준비
+        // API가 준 데이터의 실제 날짜 범위 파악 (보통 내림차순으로 옴)
+        val dates = items.map { LocalDate.parse(it.date, formatter) }
+        val realMinDate = dates.minOrNull() ?: startDate
+        val realMaxDate = dates.maxOrNull() ?: endDate
+
+        // DB에서 해당 구간 기존 데이터 조회
+        val existingMap = stockDailyRepository.findAllByStockCodeAndBaseDateBetweenOrderByBaseDateAsc(
+            stockCode, realMinDate, realMaxDate
+        ).associateBy { it.baseDate }
+
+        val saveList = mutableListOf<StockDaily>()
+
+        items.forEach { item ->
+            val baseDate = LocalDate.parse(item.date, formatter)
+            val existingEntity = existingMap[baseDate]
+
+            if (existingEntity != null) {
+                // Update
+                existingEntity.apply {
+                    closePrice = item.closePrice
+                    openPrice = item.openPrice
+                    highPrice = item.highPrice
+                    lowPrice = item.lowPrice
+                    volume = item.volume
+                    volumePrice = item.volumePrice
+                }
+                saveList.add(existingEntity)
+            } else {
+                // Insert
+                saveList.add(StockDaily(
+                    stockCode = stockCode,
+                    baseDate = baseDate,
+                    closePrice = item.closePrice,
+                    openPrice = item.openPrice,
+                    highPrice = item.highPrice,
+                    lowPrice = item.lowPrice,
+                    volume = item.volume,
+                    volumePrice = item.volumePrice,
+                    fluctuationRate = null, // 필요시 전일대비 계산 로직 추가 가능
+                    individualBuy = null,
+                    organBuy = null,
+                    foreignerBuy = null
+                ))
+            }
+        }
+
+        if (saveList.isNotEmpty()) {
+            stockDailyRepository.saveAll(saveList)
+        }
+
+        log.info(">>> [KIS Period] $stockCode ($strStart~$strEnd) : ${saveList.size}건 저장 완료")
+        return saveList.size
     }
 
 }

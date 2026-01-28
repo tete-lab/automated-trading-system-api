@@ -21,6 +21,9 @@ class Token(
     @Column(name = "expired_dt")
     var expiredDt: LocalDateTime,
 
+    @Column(name = "api_name", length = 50)
+    val apiName: String? = null,
+
     @Column(name = "member_id", length = 50)
     val memberId: String? = null // null이면 시스템(배치용) 토큰
 ) {
