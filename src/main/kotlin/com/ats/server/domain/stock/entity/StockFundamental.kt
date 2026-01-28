@@ -7,6 +7,7 @@ import jakarta.persistence.Id
 import jakarta.persistence.Table
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 @Entity
 @Table(name = "stock_fundamental")
@@ -20,7 +21,7 @@ class StockFundamental(
     var marketCap: BigDecimal?, // 시가총액
 
     @Column(name = "avg_volume")
-    var avgVolume: Long?, // 평균 거래량
+    var avgVolume: BigDecimal?, // 평균 거래량
 
     // [가치 평가 지표]
     @Column(name = "per", precision = 10, scale = 2)
@@ -60,7 +61,7 @@ class StockFundamental(
 
     // 전체 업데이트 메서드 (Yahoo Finance 등에서 긁어왔을 때 한 번에 갱신)
     fun update(
-        marketCap: BigDecimal?, avgVolume: Long?,
+        marketCap: BigDecimal?, avgVolume: BigDecimal?,
         per: BigDecimal?, pbr: BigDecimal?, psr: BigDecimal?,
         eps: BigDecimal?, bps: BigDecimal?,
         roe: BigDecimal?, revenueGrowth: BigDecimal?,
@@ -78,5 +79,6 @@ class StockFundamental(
         this.divYield = divYield
         this.divRate = divRate
         this.divPayDate = divPayDate
+        this.updatedAt = LocalDateTime.now()
     }
 }

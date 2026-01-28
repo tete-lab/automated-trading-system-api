@@ -1,52 +1,55 @@
-package com.ats.server.infra.kiwoom.client
+package com.ats.server.infra.kis.client
 
 import com.ats.server.domain.apilog.entity.ApiLog
 import com.ats.server.domain.apilog.repository.ApiLogRepository
-import com.ats.server.infra.kiwoom.dto.KiwoomApiResult
+import com.ats.server.domain.token.dto.TokenRes
+import com.ats.server.infra.kis.dto.KisApiResult
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
+import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.client.RestClientResponseException
 import org.springframework.web.client.RestTemplate
-import org.slf4j.LoggerFactory
-import org.springframework.scheduling.annotation.Async
-import org.springframework.transaction.annotation.Transactional
-import org.springframework.transaction.annotation.Propagation
+import org.springframework.web.util.UriComponentsBuilder
+
+
 @Component
-class KiwoomClient(
+class KisClient(
     private val apiLogRepository: ApiLogRepository,
-    @Value("\${api.kiwoom.base-url}") private val baseUrl: String,
-    @Value("\${api.kiwoom.mock-base-url}") private val mockUrl: String,
+    @Value("\${api.kis.base-url}") private val baseUrl: String,
+    @Value("\${api.kis.mock-base-url}") private val mockUrl: String,
     @Value("\${api.main-api.is-mock:false}") private val isMock: Boolean,
     private val restTemplate: RestTemplate
 ) {
-
     // 로거 설정
     private val log = LoggerFactory.getLogger(javaClass)
 
     // isMock에 따라 URL 분기 처리
     private val targetUrl = if (isMock) mockUrl else baseUrl
 
-    fun issueToken(appKey: String, secretKey: String): KiwoomApiResult {
-        val url = "$targetUrl/oauth2/token"
+    fun issueToken(appKey: String, secretKey: String): KisApiResult {
+        val url = "$targetUrl/oauth2/tokenP"
         val body = mapOf(
             "grant_type" to "client_credentials",
             "appkey" to appKey,
-            "secretkey" to secretKey
+            "appsecret" to secretKey
         )
         val headers = HttpHeaders().apply { contentType = MediaType.APPLICATION_JSON }
 
-        return callKiwoomApi(url, HttpMethod.POST, HttpEntity(body, headers), "접근토큰발급")
+        return callKisApi(url, HttpMethod.POST, HttpEntity(body, headers), "접근토큰발급")
     }
 
     fun revokeToken(appKey: String, secretKey: String, token: String) {
-        val url = "$targetUrl/oauth2/revoke"
+        val url = "$targetUrl/oauth2/revokeP"
         val body = mapOf(
             "appkey" to appKey,
-            "secretkey" to secretKey,
+            "appsecret" to secretKey,
             "token" to token
         )
         val headers = HttpHeaders().apply {
@@ -54,15 +57,14 @@ class KiwoomClient(
             setBearerAuth(token)
         }
 
-        callKiwoomApi(url, HttpMethod.POST, HttpEntity(body, headers), "접근토큰폐기")
+        callKisApi(url, HttpMethod.POST, HttpEntity(body, headers), "접근토큰폐기")
     }
-
-    private fun callKiwoomApi(
+    private fun callKisApi(
         url: String,
         method: HttpMethod,
         entity: HttpEntity<Map<String, String>>,
         apiName: String
-    ): KiwoomApiResult {
+    ): KisApiResult {
         val reqParamsString = entity.body.toString()
         val maskedReqParams = maskSensitiveData(reqParamsString)
 
@@ -86,7 +88,7 @@ class KiwoomClient(
 
             val hasNext = "Y".equals(contYn, ignoreCase = true)
 
-            return KiwoomApiResult(body, hasNext, nextKey)
+            return KisApiResult(body, hasNext, nextKey)
 
         } catch (e: RestClientResponseException) {
             // 수정 포인트 2: 4xx, 5xx 에러 발생 시 응답 본문(에러 메시지) 가져오기
@@ -124,7 +126,7 @@ class KiwoomClient(
     // [수정] REQUIRES_NEW를 사용하여 호출한 곳의 트랜잭션과 상관없이 별도의 쓰기 트랜잭션을 실행합니다.
     @Async // 비동기로 실행하여 메인 로직의 대기를 없앰
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-     fun saveApiLog(apiName: String, url: String, method: String, reqParams: String?, resBody: String?, statusCode: Int) {
+    fun saveApiLog(apiName: String, url: String, method: String, reqParams: String?, resBody: String?, statusCode: Int) {
         try {
             val safeResBody = if ((resBody?.length ?: 0) > 60000) {
                 resBody?.substring(0, 60000) + "...(truncated)"
@@ -153,67 +155,45 @@ class KiwoomClient(
 
 
 
+
     /**
-     * ka10005: 주식일주월시분요청 (POST 방식)
-     * 문서 27p 기준: /api/dostk/mrkcond
+     * [국내주식기간별시세(일_주_월_년)]
+     * API ID: FHKST03010100
+     * URL: /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice
      */
-    fun fetchDailyPrice(token: String, stockCode: String, strTarget: String, nextKey: String? = null): KiwoomApiResult {
-        val path = "/api/dostk/mrkcond"
+    fun fetchPeriodPrice(
+        token: String,
+        appKey: String,
+        appSecret: String,
+        stockCode: String,
+        startDate: String, // YYYYMMDD
+        endDate: String,   // YYYYMMDD
+        periodCode: String = "D", // D:일, W:주, M:월, Y:년
+        orgAdjPrice: String = "1" // 1:수정주가반영
+    ): KisApiResult {
+        val path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
         val url = "$targetUrl$path"
 
-        // [수정] POST 방식이므로 Body에 파라미터를 담습니다.
-        val body = mapOf(
-            "stk_cd" to stockCode,
-            "qry_dt" to strTarget,
-            "indc_tp" to "0" //0:수량, 1:금액(백만원) 문서엔 이렇게 써있는데 상관없는듯;
-        )
+        val uri = UriComponentsBuilder.fromHttpUrl(url)
+            .queryParam("FID_COND_MRKT_DIV_CODE", "J") // J: 주식
+            .queryParam("FID_INPUT_ISCD", stockCode)     // 종목코드
+            .queryParam("FID_INPUT_DATE_1", startDate)   // 시작일
+            .queryParam("FID_INPUT_DATE_2", endDate)     // 종료일
+            .queryParam("FID_PERIOD_DIV_CODE", periodCode)
+            .queryParam("FID_ORG_ADJ_PRC", orgAdjPrice)
+            .build()
+            .toUriString()
 
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             setBearerAuth(token)
-            // set("authorization","Bearer" + token)
-            set("api-id", "ka10086") // [중요] tr명
-            // [연속 조회 설정]
-            if (nextKey.isNullOrBlank()) {
-                set("cont-yn", "N")
-                set("next-key", "")
-            } else {
-                set("cont-yn", "Y")      // 연속 조회 하겠다
-                set("next-key", nextKey) // 이전 응답에서 받은 키
-            }
-
+            set("appkey", appKey)
+            set("appsecret", appSecret)
+            set("tr_id", "FHKST03010100") // [중요] 기간별시세 TR ID
+            set("custtype", "P")
         }
 
-        // 기존에 만드신 callKiwoomApi(url, HttpMethod.POST, ...)를 그대로 활용
-        return callKiwoomApi(url, HttpMethod.POST, HttpEntity(body, headers), "일별주가요청")
-    }
-
-    /**
-     * ka10001: 주식기본정보요청
-     * URL: /api/dostk/stkinfo
-     */
-    fun fetchStockFundamental(token: String, stockCode: String, nextKey: String? = null): KiwoomApiResult {
-        val path = "/api/dostk/stkinfo"
-        val url = "$targetUrl$path"
-
-        val body = mapOf(
-            "stk_cd" to stockCode
-        )
-
-        val headers = HttpHeaders().apply {
-            contentType = MediaType.APPLICATION_JSON
-            setBearerAuth(token)
-            set("api-id", "ka10001") // TR명
-            // [연속 조회 설정]
-            if (nextKey.isNullOrBlank()) {
-                set("cont-yn", "N")
-                set("next-key", "")
-            } else {
-                set("cont-yn", "Y")      // 연속 조회 하겠다
-                set("next-key", nextKey) // 이전 응답에서 받은 키
-            }
-        }
-
-        return callKiwoomApi(url, HttpMethod.POST, HttpEntity(body, headers), "주식기본정보요청")
+        // GET 방식 호출
+        return callKisApi(uri, HttpMethod.GET, HttpEntity(null, headers), "기간별시세요청")
     }
 }

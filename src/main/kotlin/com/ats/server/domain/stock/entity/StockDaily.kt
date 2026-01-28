@@ -4,6 +4,7 @@ import com.ats.server.global.entity.BaseEntity
 import jakarta.persistence.*
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 @Entity
 @Table(
@@ -114,5 +115,6 @@ class StockDaily(
         this.signalLine = signalLine
         this.crossType = crossType
         this.recommendYn = recommendYn
+        this.updatedAt = LocalDateTime.now()
     }
 }

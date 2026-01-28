@@ -6,7 +6,8 @@ import java.time.LocalDateTime
 
 data class TokenFindReq(
     @field:Schema(description = "회원아이디(NULL이면 SYS_CONFIG)")
-    val memberId: String? = null
+    val memberId: String? = null,
+    val apiName: String? = null
 )
 
 data class TokenRes(
@@ -17,7 +18,10 @@ data class TokenRes(
     val tokenType: String,
 
     @field:Schema(description = "만료일시")
-    val expiredDt: LocalDateTime
+    val expiredDt: LocalDateTime,
+
+    @field:Schema(description = "api name")
+    val apiName: String? = null
 ) {
     // Entity -> DTO 변환 편의 메서드 (Companion Object)
     companion object {
@@ -25,7 +29,8 @@ data class TokenRes(
             return TokenRes(
                 token = entity.token,
                 tokenType = entity.tokenType,
-                expiredDt = entity.expiredDt
+                expiredDt = entity.expiredDt,
+                apiName = entity.apiName
             )
         }
     }
