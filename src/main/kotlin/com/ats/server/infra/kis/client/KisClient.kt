@@ -81,6 +81,8 @@ class KisClient(
 
             val body = responseEntity.body ?: ""
             val headers = responseEntity.headers
+            // [🚨 디버깅용 로그 추가] 실제 서버가 뭐라고 응답했는지 확인
+            log.info(">>> [$apiName] Raw Response Body: $body")
 
             // [헤더 파싱] cont-yn과 next-key 추출
             val contYn = headers.getFirst("cont-yn")
@@ -95,10 +97,12 @@ class KisClient(
             statusCode = e.statusCode.value()
             responseBody = e.responseBodyAsString
             errorMsg = "HTTP ERROR: ${e.statusCode} - ${e.responseBodyAsString}"
+            log.error(">>> [$apiName] HTTP Error: ${e.statusCode} / Body: ${e.responseBodyAsString}")
             throw e
         } catch (e: Exception) {
             statusCode = 500
             errorMsg = "SYSTEM ERROR: ${e.message}"
+            log.error(">>> [$apiName] System Error: ${e.message}")
 
             retryCount++
             if (retryCount >= maxRetry) {
@@ -195,5 +199,45 @@ class KisClient(
 
         // GET 방식 호출
         return callKisApi(uri, HttpMethod.GET, HttpEntity(null, headers), "기간별시세요청")
+    }
+
+    /**
+     * [국내주식 재무비율]
+     * API ID: v1_국내주식-080
+     * TR_ID: FHKST66430300
+     * URL: /uapi/domestic-stock/v1/finance/financial-ratio
+     */
+    fun fetchFinancialRatio(
+        token: String,
+        appKey: String,
+        appSecret: String,
+        stockCode: String
+    ): KisApiResult {
+        // [안전장치] 이 API는 모의투자를 지원하지 않음
+        if (targetUrl.contains("openapivts")) { // 혹은 isMock 변수 확인
+            throw RuntimeException("⚠️ [재무비율 API]는 모의투자를 지원하지 않습니다. 실전투자(Real) 환경에서 실행해주세요.")
+        }
+
+        val path = "/uapi/domestic-stock/v1/finance/financial-ratio"
+        val url = "$targetUrl$path"
+        val divClassCode = "1"
+        val uri = UriComponentsBuilder.fromHttpUrl(url)
+            .queryParam("FID_COND_MRKT_DIV_CODE", "J") // J: 주식
+            .queryParam("FID_INPUT_ISCD", stockCode)     // 종목코드
+            // 만약 분기/연간 구분이 필요하다면 "FID_DIV_CLS_CODE" 파라미터 확인 필요 (문서상 기본값 사용 시 생략 가능)
+            .queryParam("FID_DIV_CLS_CODE", divClassCode)
+            .build()
+            .toUriString()
+
+        val headers = HttpHeaders().apply {
+            contentType = MediaType.APPLICATION_JSON
+            setBearerAuth(token)
+            set("tr_id", "FHKST66430300") // 재무비율 TR ID
+            set("custtype", "P")          // 개인
+            set("appkey", appKey)         // 필수
+            set("appsecret", appSecret)   // 필수
+        }
+
+        return callKisApi(uri, HttpMethod.GET, HttpEntity(null, headers), "재무비율요청")
     }
 }
