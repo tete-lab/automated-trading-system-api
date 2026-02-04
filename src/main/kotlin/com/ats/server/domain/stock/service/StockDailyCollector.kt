@@ -23,7 +23,7 @@ class StockDailyCollector(
 
     // [설정] 키움 API 서버 부하를 고려한 동시 요청 수 (너무 높으면 IP 차단됨)
     // 10 ~ 20 정도가 적당해보임. 로그 보면서 조절 필요. (EOF가 잦으면 10 또는 5로 수정)
-    private val limitSemaphore = Semaphore(20)
+    private val limitSemaphore = Semaphore(10)
 
     fun collectAll(targetDate: LocalDate, token: String) : Int {
         // [수정 전] 전체 종목 리스트
@@ -41,7 +41,7 @@ class StockDailyCollector(
         val successCount = AtomicInteger(0)
         val failCount = AtomicInteger(0)
 
-        log.info(">>> [Collector] 총 ${total}개 종목 병렬 수집 시작 (Max Concurrency: 20)")
+        log.info(">>> [Collector] 총 ${total}개 종목 병렬 수집 시작 (Max Concurrency: 10)")
 
         val time = measureTimeMillis {
             // 코루틴 스코프 실행 (Dispatcher.IO는 네트워크 요청에 최적화된 스레드풀 사용)
@@ -95,7 +95,7 @@ class StockDailyCollector(
         val failCount = AtomicInteger(0)
 
         // [주의] KIS API는 초당 조회 제한(TPS)이 타이트하므로 세마포어를 키움(20)보다 보수적으로 잡는 게 안전합니다. (예: 5~10)
-        // 여기서는 기존 설정인 kisLimitSemaphore(20)을 쓰되, 에러가 나면 줄여야 합니다.
+        // 여기서는 기존 설정인 kisLimitSemaphore(5)을 쓰되, 에러가 나면 줄여야 합니다.
         log.info(">>> [KIS Collector] 총 ${total}개 종목 병렬 수집 시작 (Max Concurrency: ${kisLimitSemaphore.availablePermits})")
 
         val time = measureTimeMillis {

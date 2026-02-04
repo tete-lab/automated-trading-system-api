@@ -165,7 +165,7 @@ class StockFinancialRatioService(
             repository.saveAll(saveList)
         }
 
-        log.info(">>> [KIS Financial] $stockCode : ${saveList.size}건 저장 완료")
+        //log.info(">>> [KIS Financial] $stockCode : ${saveList.size}건 저장 완료")
         return saveList.size
     }
 }
