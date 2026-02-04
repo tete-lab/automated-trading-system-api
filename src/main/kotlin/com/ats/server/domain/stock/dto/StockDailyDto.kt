@@ -36,7 +36,7 @@ data class StockDailyCreateReq(
     val rsi: BigDecimal? = null,
     val macd: BigDecimal? = null,
     val signalLine: BigDecimal? = null,
-    val crossType: BigDecimal? = null,
+    val crossType: Int? = null,
     val recommendYn: String = "N"
 )
 
@@ -62,7 +62,7 @@ data class StockDailyUpdateReq(
     val rsi: BigDecimal?,
     val macd: BigDecimal?,
     val signalLine: BigDecimal?,
-    val crossType: BigDecimal?,
+    val crossType: Int?,
     val recommendYn: String
 )
 
@@ -87,6 +87,6 @@ data class StockDailyRes(
     val ema26: BigDecimal?,
     val rsi: BigDecimal?,
     val macd: BigDecimal?,
-    val crossType: BigDecimal?,
+    val crossType: Int?,
     val recommendYn: String
 )

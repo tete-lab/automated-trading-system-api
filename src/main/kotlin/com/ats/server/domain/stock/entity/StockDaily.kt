@@ -77,7 +77,7 @@ class StockDaily(
     var signalLine: BigDecimal? = null,
 
     @Column(name = "cross_type", precision = 10, scale = 2)
-    var crossType: BigDecimal? = null, // 예: 1.0(Golden), -1.0(Dead)
+    var crossType: Int? = 0, // 예: 1.0(Golden), -1.0(Dead)
 
     @Column(name = "recommend_yn", length = 1)
     var recommendYn: String = "Y"
@@ -92,7 +92,7 @@ class StockDaily(
         sma20: BigDecimal?, sma50: BigDecimal?,
         ema9: BigDecimal?, ema12: BigDecimal?, ema26: BigDecimal?,
         rsi: BigDecimal?, macd: BigDecimal?, signalLine: BigDecimal?,
-        crossType: BigDecimal?, recommendYn: String
+        crossType: Int?, recommendYn: String
     ) {
         this.closePrice = closePrice
         this.openPrice = openPrice

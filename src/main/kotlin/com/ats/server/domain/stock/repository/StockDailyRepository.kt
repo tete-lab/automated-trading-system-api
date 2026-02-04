@@ -5,6 +5,7 @@ import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.Optional
 
@@ -31,5 +32,17 @@ interface StockDailyRepository : JpaRepository<StockDaily, Long> {
     fun findPriceHistory(@Param("stockCode") stockCode: String,
                          @Param("baseDate") baseDate: LocalDate,
                          pageable: Pageable
+    ): List<StockDaily>
+
+    // [매수 추천] 골든크로스(1) 발생 종목 100개 (RSI 오름차순: 과매도된 것부터 추천)
+    fun findTop100ByBaseDateAndCrossTypeOrderByRsiAsc(
+        baseDate: LocalDate,
+        crossType: Int
+    ): List<StockDaily>
+
+    // [매도 추천] 데드크로스(-1) 발생 종목 100개 (RSI 내림차순: 과매수된 것부터 추천)
+    fun findTop100ByBaseDateAndCrossTypeOrderByRsiDesc(
+        baseDate: LocalDate,
+        crossType: Int
     ): List<StockDaily>
 }

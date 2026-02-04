@@ -46,6 +46,9 @@ dependencies {
 	// MySQL
 	runtimeOnly("com.mysql:mysql-connector-j")
 
+	//Email
+	implementation("org.springframework.boot:spring-boot-starter-mail")
+
 	implementation("org.apache.httpcomponents.client5:httpclient5")
 	// [필수] 코루틴 핵심 라이브러리 (launch, runBlocking, Dispatchers 등)
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
@@ -76,4 +79,10 @@ allOpen {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+}
+
+// build.gradle.kts 맨 아래에 추가
+// 실행 불가능한 일반 jar(plain) 생성 끄기 -> Docker 빌드 시 파일 충돌 방지
+tasks.getByName<Jar>("jar") {
+	enabled = false
 }
