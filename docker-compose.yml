@@ -10,3 +10,7 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=prod
       - TZ=Asia/Seoul
+    # [핵심] 서버의 파일을 컨테이너 내부로 연결 (Volume)
+    volumes:
+      # 호스트의 파일 경로 : 컨테이너 내부 경로
+      - ./application-prd.yml:/app/application-prd.yml
