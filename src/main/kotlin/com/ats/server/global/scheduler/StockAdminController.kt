@@ -63,7 +63,7 @@ class StockAdminController(
         return ResponseEntity.ok("🚀 수동 수집 프로세스가 백그라운드에서 시작되었습니다. (완료 여부는 텔레그램/로그 확인)")
     }
 
-    @Operation(summary = "수동 데이터 수집 실행", description = "스케줄러 로직을 백그라운드에서 즉시 실행합니다.")
+    @Operation(summary = "지표로 종목 추천 이메일 발송", description = "지표로 종목 추천 이메일 발송합니다.")
     @PostMapping("/mail-manual")
     fun mailManualSync(): ResponseEntity<String?>? {
         // [핵심] suspend 함수가 아니므로 기다리지 않음
