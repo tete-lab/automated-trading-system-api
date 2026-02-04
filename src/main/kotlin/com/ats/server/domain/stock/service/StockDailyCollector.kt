@@ -16,13 +16,14 @@ import kotlin.system.measureTimeMillis
 @Service
 class StockDailyCollector(
     private val stockDailyService: StockDailyService,
+    private val stockFinancialRatioService: StockFinancialRatioService,
     private val stockMasterRepository: StockMasterRepository // 종목코드 가져오기용
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     // [설정] 키움 API 서버 부하를 고려한 동시 요청 수 (너무 높으면 IP 차단됨)
     // 10 ~ 20 정도가 적당해보임. 로그 보면서 조절 필요. (EOF가 잦으면 10 또는 5로 수정)
-    private val limitSemaphore = Semaphore(20)
+    private val limitSemaphore = Semaphore(10)
 
     fun collectAll(targetDate: LocalDate, token: String) : Int {
         // [수정 전] 전체 종목 리스트
@@ -40,7 +41,7 @@ class StockDailyCollector(
         val successCount = AtomicInteger(0)
         val failCount = AtomicInteger(0)
 
-        log.info(">>> [Collector] 총 ${total}개 종목 병렬 수집 시작 (Max Concurrency: 20)")
+        log.info(">>> [Collector] 총 ${total}개 종목 병렬 수집 시작 (Max Concurrency: 10)")
 
         val time = measureTimeMillis {
             // 코루틴 스코프 실행 (Dispatcher.IO는 네트워크 요청에 최적화된 스레드풀 사용)
@@ -94,7 +95,7 @@ class StockDailyCollector(
         val failCount = AtomicInteger(0)
 
         // [주의] KIS API는 초당 조회 제한(TPS)이 타이트하므로 세마포어를 키움(20)보다 보수적으로 잡는 게 안전합니다. (예: 5~10)
-        // 여기서는 기존 설정인 kisLimitSemaphore(20)을 쓰되, 에러가 나면 줄여야 합니다.
+        // 여기서는 기존 설정인 kisLimitSemaphore(5)을 쓰되, 에러가 나면 줄여야 합니다.
         log.info(">>> [KIS Collector] 총 ${total}개 종목 병렬 수집 시작 (Max Concurrency: ${kisLimitSemaphore.availablePermits})")
 
         val time = measureTimeMillis {
@@ -154,6 +155,91 @@ class StockDailyCollector(
         }
 
         log.info(">>> [KIS 완료] 소요시간: ${time / 1000}초, 대상: $total, 성공: $successCount, 실패: $failCount")
+        return successCount.get()
+    }
+
+
+    private val kisLimitSemaphoreForRatio = Semaphore(4)
+    /**
+     * [한국투자증권] 재무비율 병렬 수집 (Bulk)
+     * - 전 종목을 대상으로 재무비율(연간/분기) 데이터를 수집합니다.
+     * - API 특성상 기간 지정 없이 리스트를 받아오므로 날짜 파라미터는 사용하지 않습니다.
+     */
+    fun collectAllFinancialRatioFromKis(token: String, divClassCode: String = "1"): Int {
+        // 1. 수집 대상 종목 선정 (전체 종목)
+        log.info(">>> [KIS Financial Collector] 전체 종목 재무비율 수집을 시작합니다.")
+        val codes = stockMasterRepository.findAllStockCodes()
+
+        val total = codes.size
+        if (total == 0) {
+            log.info(">>> [KIS Financial Collector] 수집할 종목이 없습니다.")
+            return 0
+        }
+
+        val successCount = AtomicInteger(0)
+        val failCount = AtomicInteger(0)
+
+        // [세마포어] 일별시세와 공유하거나 별도로 설정 (여기선 공유한다고 가정)
+        log.info(">>> [KIS Financial Collector] 총 ${total}개 종목 병렬 수집 시작 (Max Concurrency: ${kisLimitSemaphore.availablePermits})")
+
+        val time = measureTimeMillis {
+            runBlocking(Dispatchers.IO) {
+                codes.forEach { stockCode ->
+                    launch {
+                        // 세마포어로 동시 실행 제어 (Rate Limiting)
+                        kisLimitSemaphoreForRatio.withPermit {
+                            var retryCount = 0
+                            val maxRetry = 3
+                            var isSuccess = false
+
+                            // [재시도 로직] TPS 초과(EGW00201) 대응
+                            while (retryCount < maxRetry && !isSuccess) {
+                                try {
+                                    // Service 호출
+                                    val result = stockFinancialRatioService.syncFinancialRatio(
+                                        stockCode = stockCode,
+                                        token = token
+                                        // 필요하다면 divClassCode(0:분기, 1:연간) 추가 전달
+                                    )
+
+                                    if (result > 0) successCount.incrementAndGet()
+                                    isSuccess = true
+
+                                    // [수정 2] 초당 4건 유지를 위한 1초 대기
+                                    // 4개의 스레드가 각각 1초씩 쉬므로, 전체적으로 1초에 4건이 처리됨
+                                    delay(1000)
+
+                                } catch (e: HttpServerErrorException) {
+                                    delay(2000) // 2초 대기
+
+                                    // 500 에러 중 "초당 거래건수" 관련 에러인지 확인
+                                    val errorBody = e.responseBodyAsString
+                                    if (errorBody.contains("msg1\":\"초당") || errorBody.contains("EGW00201")) {
+                                        retryCount++
+                                        log.warn(">>> [TPS 초과] $stockCode 재무비율 대기 후 재시도 ($retryCount/$maxRetry)")
+                                    } else {
+                                        log.error("KIS Financial 500 Error [$stockCode]: $errorBody")
+                                        break
+                                    }
+                                } catch (e: Exception) {
+                                    delay(2000) // 2초 대기
+
+                                    log.error("KIS Financial Error [$stockCode]: ${e.message}")
+                                    break
+                                }
+                            }
+
+                            if (!isSuccess) {
+                                log.error(">>> [FAIL] $stockCode 최종 실패")
+                                failCount.incrementAndGet()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        log.info(">>> [KIS Financial 완료] 소요시간: ${time / 1000}초, 대상: $total, 성공: $successCount, 실패: $failCount")
         return successCount.get()
     }
 }

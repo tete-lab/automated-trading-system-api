@@ -4,6 +4,7 @@ import com.ats.server.domain.stock.service.StockDailyCollector
 import com.ats.server.domain.stock.service.StockDailyService
 import com.ats.server.domain.stock.service.StockFundamentalCollector
 import com.ats.server.domain.stock.service.StockFundamentalService
+import com.ats.server.domain.stock.service.StockFinancialRatioService
 import com.ats.server.domain.stock.service.StockSyncService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -21,7 +22,8 @@ class StockSyncController(
     private val stockDailyService: StockDailyService,
     private val stockDailyCollector: StockDailyCollector,
     private val stockFundamentalCollector: StockFundamentalCollector,
-    private val stockFundamentalService: StockFundamentalService
+    private val stockFundamentalService: StockFundamentalService,
+    private val stockFinancialRatioService: StockFinancialRatioService
 ) {
 
     //이 api는 공공데이터 포털에서의 정보를 토대로 stock_master와 fundametal 데이터의 기본값만 가져옴
@@ -136,6 +138,34 @@ class StockSyncController(
         val token = stockDailyService.getApiToken("KIS")
         //데이터 수집
         val count = stockDailyCollector.collectAllPeriodFromKis(startDate,endDate, token)
+
+        return ResponseEntity.ok("총 ${count}건의 데이터가 수집/갱신되었습니다.")
+    }
+
+    @Operation(summary = "[한투] 재무비율 수집 (단건)", description = "특정 종목의 재무비율 정보를 KIS API에서 수집하여 DB에 저장합니다.")
+    @PostMapping("/fetch/kis/financial-ratio/{stockCode}")
+    fun syncFinancialRatioOne(
+        @Parameter(description = "종목코드", example = "005930")
+        @PathVariable stockCode: String
+    ): ResponseEntity<String> {
+
+        // 1. 토큰 및 키 정보 조회 (Helper 메서드 활용)
+        val token = stockDailyService.getApiToken("KIS")
+
+        // 2. 서비스 호출
+        val count = stockFinancialRatioService.syncFinancialRatio(stockCode, token)
+
+        return ResponseEntity.ok("종목($stockCode) 재무비율 동기화 완료: ${count}건 저장됨")
+    }
+
+    @Operation(summary = "[한투] 재무비율 수집 (전체 종목)", description = "특정 종목의 재무비율 정보를 KIS API에서 수집하여 DB에 저장합니다.")
+    @PostMapping("/fetch/kis/financial-ratio/all")
+    fun syncFinancialRatioAll(
+    ): ResponseEntity<String> {
+        // 1. 토큰 발급 (캐싱 로직은 Client 내부 혹은 여기서 처리)
+        val token = stockDailyService.getApiToken("KIS")
+        //데이터 수집
+        val count = stockDailyCollector.collectAllFinancialRatioFromKis(token)
 
         return ResponseEntity.ok("총 ${count}건의 데이터가 수집/갱신되었습니다.")
     }

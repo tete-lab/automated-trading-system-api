@@ -390,18 +390,17 @@ class StockDailyService(
                             if (historyDesc.size >= 30) {
                                 val history = historyDesc.reversed()
                                 val closePrices = history.map { it.closePrice.toDouble() }
-//                                log.info("closePrices : " + closePrices)
-                                // 지수 계산 로직 (기존 함수 재사용)
-                                val sma20 = calculateSma(closePrices, 20)
-//                                log.info("sma20 : " + sma20)
 
+                                // 지수 계산
+                                val sma20 = calculateSma(closePrices, 20)
                                 val sma50 = calculateSma(closePrices, 50)
                                 val ema9 = calculateEma(closePrices, 9)
                                 val ema12 = calculateEma(closePrices, 12)
                                 val ema26 = calculateEma(closePrices, 26)
                                 val rsi = calculateRsi(closePrices, 14)
-                                val (macd, signal) = calculateMacd(closePrices)
-                                // val crossType = determineCrossType(...)
+
+                                // [수정] MACD 함수가 이제 3가지 값을 반환함 (구조 분해 선언)
+                                val (macd, signal, crossType) = calculateMacd(closePrices)
 
                                 // Entity 업데이트
                                 stock.apply {
@@ -411,11 +410,16 @@ class StockDailyService(
                                     this.ema12 = ema12?.toBigDecimal()
                                     this.ema26 = ema26?.toBigDecimal()
                                     this.rsi = rsi?.toBigDecimal()
+
                                     this.macd = macd?.toBigDecimal()
                                     this.signalLine = signal?.toBigDecimal()
+
+                                    // [추가] 크로스 타입 저장 (DB 컬럼명에 맞춰 수정하세요)
+                                    // 예: this.macdCross = crossType
+                                    // 만약 Entity에 필드가 없다면 추가해야 합니다.
+                                    this.crossType = crossType
                                 }
 
-                                // ★ 병렬 환경에서는 명시적 save 권장 (변경감지 트랜잭션 범위 애매할 수 있음)
                                 stockDailyRepository.save(stock)
                             }
                         } catch (e: Exception) {
@@ -456,11 +460,14 @@ class StockDailyService(
     }
 
     // List 전체의 EMA 시리즈를 반환 (MACD 계산용)
+    // List 전체의 EMA 시리즈를 반환 (MACD 계산 시 필요)
     private fun calculateEmaSeries(prices: List<Double>, period: Int): List<Double> {
         if (prices.isEmpty()) return emptyList()
 
         val alpha = 2.0 / (period + 1.0)
         val result = ArrayList<Double>()
+
+        // 첫 데이터로 초기화 (SMA로 시작하는 경우도 있으나, 여기선 첫 값 사용)
         var ema = prices[0]
         result.add(ema)
 
@@ -491,24 +498,53 @@ class StockDailyService(
     }
 
     // 4. MACD & Signal
-    private fun calculateMacd(prices: List<Double>): Pair<Double?, Double?> {
-        if (prices.size < 26) return Pair(null, null)
+    /**
+     * MACD, Signal, 그리고 Cross 여부를 계산
+     * Return: Triple(Macd값, Signal값, CrossType)
+     * CrossType: 1(Golden), -1(Dead), 0(None)
+     */
+    private fun calculateMacd(prices: List<Double>): Triple<Double?, Double?, Int> {
+        // MACD를 구하기 위한 최소 데이터 개수 체크 (26일 + Signal용 1일 이상 권장)
+        if (prices.size < 26) return Triple(null, null, 0)
 
-        // 전체 기간에 대한 EMA 시리즈 생성
+        // 1. 전체 기간에 대한 EMA 시리즈 생성
         val ema12Series = calculateEmaSeries(prices, 12)
         val ema26Series = calculateEmaSeries(prices, 26)
 
-        // MACD Series = EMA12 - EMA26
+        // 2. MACD Series = EMA12 - EMA26
+        // (zip을 이용해 같은 인덱스끼리 뺌)
         val macdSeries = ema12Series.zip(ema26Series) { e12, e26 -> e12 - e26 }
 
-        // 현재(마지막) MACD 값
-        val currentMacd = macdSeries.last()
+        // 3. Signal Series = MACD Series의 9일 EMA
+        val signalSeries = calculateEmaSeries(macdSeries, 9)
 
-        // Signal Line = MACD Series의 9일 EMA
-        // Signal 계산을 위해 MACD Series 자체를 EMA 함수에 넣음
-        val currentSignal = calculateEma(macdSeries, 9)
+        // 데이터 개수 안전 장치
+        if (macdSeries.isEmpty() || signalSeries.isEmpty()) {
+            return Triple(null, null, 0)
+        }
 
-        return Pair(currentMacd, currentSignal)
+        // 4. 오늘(마지막) 값
+        val currMacd = macdSeries.last()
+        val currSignal = signalSeries.last()
+
+        // 5. 크로스 체크 (데이터가 2개 이상일 때만 가능)
+        var crossType = 0 // 0: 없음, 1: 골든, -1: 데드
+
+        if (macdSeries.size >= 2 && signalSeries.size >= 2) {
+            val prevMacd = macdSeries[macdSeries.lastIndex - 1]
+            val prevSignal = signalSeries[signalSeries.lastIndex - 1]
+
+            // 골든 크로스: 어제는 MACD가 시그널 아래, 오늘은 위
+            if (prevMacd < prevSignal && currMacd > currSignal) {
+                crossType = 1
+            }
+            // 데드 크로스: 어제는 MACD가 시그널 위, 오늘은 아래
+            else if (prevMacd > prevSignal && currMacd < currSignal) {
+                crossType = -1
+            }
+        }
+
+        return Triple(currMacd, currSignal, crossType)
     }
 
     // 5. 골든크로스/데드크로스 판별
@@ -634,7 +670,7 @@ class StockDailyService(
             stockDailyRepository.saveAll(saveList)
         }
 
-        log.info(">>> [KIS Period] $stockCode ($strStart~$strEnd) : ${saveList.size}건 저장 완료")
+        //log.info(">>> [KIS Period] $stockCode ($strStart~$strEnd) : ${saveList.size}건 저장 완료")
         return saveList.size
     }
 
