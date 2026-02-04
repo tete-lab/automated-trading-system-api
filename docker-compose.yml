@@ -8,7 +8,7 @@ services:
       - "8002:8080"  # 호스트:8002 -> 컨테이너:8080
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
+      - SPRING_PROFILES_ACTIVE=prd
       - TZ=Asia/Seoul
     # [핵심] 서버의 파일을 컨테이너 내부로 연결 (Volume)
     volumes:
