@@ -45,4 +45,16 @@ interface StockDailyRepository : JpaRepository<StockDaily, Long> {
         baseDate: LocalDate,
         crossType: Int
     ): List<StockDaily>
+
+    // [신규] 업데이트 대상 조회
+    // 해당 날짜에 데이터가 존재하면서, 투자자 매매동향 컬럼 중 하나라도 NULL인 종목 코드 리스트 반환
+    @Query("""
+        SELECT s.stockCode 
+        FROM StockDaily s 
+        WHERE s.baseDate = :date 
+          AND (s.individualBuy IS NULL 
+               OR s.organBuy IS NULL 
+               OR s.foreignerBuy IS NULL)
+    """)
+    fun findStockCodesForInvestorTrendUpdate(@Param("date") date: LocalDate): List<String>
 }

@@ -82,7 +82,7 @@ class KisClient(
             val body = responseEntity.body ?: ""
             val headers = responseEntity.headers
             // [🚨 디버깅용 로그 추가] 실제 서버가 뭐라고 응답했는지 확인
-            log.info(">>> [$apiName] Raw Response Body: $body")
+//            log.info(">>> [$apiName] Raw Response Body: $body")
 
             // [헤더 파싱] cont-yn과 next-key 추출
             val contYn = headers.getFirst("cont-yn")
@@ -239,5 +239,43 @@ class KisClient(
         }
 
         return callKisApi(uri, HttpMethod.GET, HttpEntity(null, headers), "재무비율요청")
+    }
+
+
+    /**
+     * [국내주식 투자자별 매매동향(일별)]
+     * API ID: 국내주식-075
+     * TR_ID: FHKST01010900
+     * URL: /uapi/domestic-stock/v1/quotations/inquire-investor
+     */
+    fun fetchInvestorTrend(
+        token: String,
+        appKey: String,
+        appSecret: String,
+        stockCode: String,
+        startDate: String, // YYYYMMDD
+        endDate: String    // YYYYMMDD
+    ): KisApiResult {
+        val path = "/uapi/domestic-stock/v1/quotations/inquire-investor"
+        val url = "$targetUrl$path"
+
+        val uri = UriComponentsBuilder.fromHttpUrl(url)
+            .queryParam("FID_COND_MRKT_DIV_CODE", "J") // J: 주식, W: ELW ...
+            .queryParam("FID_INPUT_ISCD", stockCode)     // 종목코드
+            .queryParam("FID_INPUT_DATE_1", startDate)   // 조회 시작일
+            .queryParam("FID_INPUT_DATE_2", endDate)     // 조회 종료일
+            .build()
+            .toUriString()
+
+        val headers = HttpHeaders().apply {
+            contentType = MediaType.APPLICATION_JSON
+            setBearerAuth(token)
+            set("tr_id", "FHKST01010900") // 투자자별 매매동향 TR ID
+            set("custtype", "P")          // P: 개인
+            set("appkey", appKey)
+            set("appsecret", appSecret)
+        }
+
+        return callKisApi(uri, HttpMethod.GET, HttpEntity(null, headers), "투자자매매동향요청")
     }
 }
