@@ -169,4 +169,41 @@ class StockSyncController(
 
         return ResponseEntity.ok("총 ${count}건의 데이터가 수집/갱신되었습니다.")
     }
+
+    @Operation(summary = "[한투] 투자자별 매매동향 수집 (단건)", description = "특정 종목, 특정 날짜의 투자자별 매매동향(개인/외국인/기관)을 조회하여 DB를 업데이트합니다.")
+    @PostMapping("/fetch/kis/investor-trend/single")
+    suspend fun fetchInvestorTrendSingle(
+        @Parameter(description = "종목코드", example = "005930")
+        @RequestParam stockCode: String,
+        @Parameter(description = "날짜 (yyyyMMdd)", example = "20260205")
+        @RequestParam @DateTimeFormat(pattern = "yyyyMMdd") date: LocalDate
+    ): ResponseEntity<String> {
+        // 토큰 발급
+        val token = stockDailyService.getApiToken("KIS")
+
+        // 단건 수집 및 업데이트
+        val result = stockDailyService.fetchAndSaveInvestorTrend(stockCode, date, token)
+
+        return if (result) {
+            ResponseEntity.ok("종목($stockCode) 날짜($date) 투자자 매매동향 업데이트 완료")
+        } else {
+            ResponseEntity.ok("종목($stockCode) 날짜($date) 데이터가 없거나 업데이트 대상이 아닙니다.")
+        }
+    }
+
+    @Operation(summary = "[한투] 투자자별 매매동향 수집 (전체)", description = "특정 날짜의 모든 종목 중, 데이터가 존재하면서 매매동향 값이 비어있는 항목을 일괄 업데이트합니다.")
+    @PostMapping("/fetch/kis/investor-trend/all")
+    fun fetchInvestorTrendAll(
+        @Parameter(description = "날짜 (yyyyMMdd)", example = "20260205")
+        @RequestParam @DateTimeFormat(pattern = "yyyyMMdd") date: LocalDate
+    ): ResponseEntity<String> {
+        // 토큰 발급
+        val token = stockDailyService.getApiToken("KIS")
+
+        // 벌크 수집 (Collector 위임)
+        val count = stockDailyCollector.collectInvestorTrendAll(date, token)
+
+        return ResponseEntity.ok("날짜($date) 총 ${count}건의 투자자 매매동향이 업데이트되었습니다.")
+    }
+
 }
