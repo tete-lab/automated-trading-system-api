@@ -43,13 +43,16 @@ class StockDaily(
     var volumePrice: BigDecimal?,
 
     @Column(name = "fluctuation_rate")
-    var fluctuationRate: String?,
+    var fluctuationRate: String? = null,
+
     @Column(name = "individual_buy")
-    var individualBuy: String?,
+    var individualBuy: String? = null,
+
     @Column(name = "organ_buy")
-    var organBuy: String?,
+    var organBuy: String? = null,
+
     @Column(name = "foreigner_buy")
-    var foreignerBuy: String?,
+    var foreignerBuy: String? = null,
 
     // [보조 지표]
     @Column(name = "sma_20", precision = 15, scale = 2)

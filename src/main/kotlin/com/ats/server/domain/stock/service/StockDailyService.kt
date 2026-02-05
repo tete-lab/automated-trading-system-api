@@ -10,6 +10,7 @@ import com.ats.server.domain.token.dto.TokenFindReq
 import com.ats.server.domain.token.dto.TokenRes
 import com.ats.server.domain.token.service.TokenService
 import com.ats.server.infra.kis.client.KisClient
+import com.ats.server.infra.kis.dto.KisApiResult
 import com.ats.server.infra.kis.dto.KisPeriodPriceResponse
 import com.ats.server.infra.kiwoom.client.KiwoomClient
 import com.ats.server.infra.kiwoom.dto.KiwoomDailyItem
@@ -28,7 +29,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.system.measureTimeMillis
-
+import com.ats.server.infra.kis.dto.KisInvestorTrendResponse // [Import] 분리된 DTO
 
 @Service
 @Transactional(readOnly = true)
@@ -672,6 +673,75 @@ class StockDailyService(
 
         //log.info(">>> [KIS Period] $stockCode ($strStart~$strEnd) : ${saveList.size}건 저장 완료")
         return saveList.size
+    }
+
+    /**
+     * 투자자별 매매동향 단건 수집 및 저장
+     * return: 업데이트 성공 여부
+     */
+    @Transactional
+    suspend fun fetchAndSaveInvestorTrend(stockCode: String, date: LocalDate, token: String): Boolean {
+        // 1. 데이터 가져오기 (Optional 벗기기)
+        val stockDaily = stockDailyRepository.findByStockCodeAndBaseDate(stockCode, date).orElse(null)
+            ?: return false
+
+        try {
+            // 2. API 호출
+            val response = callKisInvestorApi(stockCode, date, token)
+
+            // 3. 날짜 매칭
+            val targetData = response?.output?.find {
+                it.stckBsopDate == date.format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+            }
+
+            if (targetData != null) {
+                // 4. 데이터 유효성 검사 (빈 값 체크)
+                if (targetData.individualBuyQty.isNullOrBlank()) {
+                    log.warn(">>> [Skip] 데이터가 비어있음: $stockCode ($date)")
+                    return false
+                }
+
+                // 5. 값 변경
+                stockDaily.apply {
+                    this.fluctuationRate = targetData.fluctuationRate
+                    this.individualBuy = targetData.individualBuyQty
+                    this.foreignerBuy = targetData.foreignerBuyQty
+                    this.organBuy = targetData.organBuyQty
+                }
+
+                // [🚨 핵심 수정] 변경 사항을 즉시 DB에 반영 (Flush & Commit)
+                stockDailyRepository.save(stockDaily)
+
+//                log.info(">>> [Success] $stockCode ($date) 투자자 데이터 업데이트 완료! (개인: ${targetData.individualBuyQty})")
+                return true
+            } else {
+                log.warn("KIS data not found for $stockCode at $date")
+            }
+
+        } catch (e: Exception) {
+            log.error("Failed to fetch investor trend for $stockCode: ${e.message}")
+            throw e
+        }
+        return false
+    }
+
+    private fun callKisInvestorApi(stockCode: String, date: LocalDate, token: String): KisInvestorTrendResponse? {
+        val dateStr = date.format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+        // Config 등에서 앱키 가져오는 로직 필요 (혹은 파라미터로 받기)
+        val (appKey, appSecret) = tokenService.getAppKeys(null, "KIS")
+
+        // [수정] KisClient 호출
+        val result: KisApiResult = kisClient.fetchInvestorTrend(
+            token = token,
+            appKey = appKey,
+            appSecret = appSecret,
+            stockCode = stockCode,
+            startDate = dateStr,
+            endDate = dateStr
+        )
+
+        // String(JSON) -> DTO 변환 (ObjectMapper 사용)
+        return objectMapper.readValue(result.body, KisInvestorTrendResponse::class.java)
     }
 
 }

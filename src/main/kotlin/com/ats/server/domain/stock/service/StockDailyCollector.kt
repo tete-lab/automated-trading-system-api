@@ -1,5 +1,6 @@
 package com.ats.server.domain.stock.service
 
+import com.ats.server.domain.stock.repository.StockDailyRepository
 import com.ats.server.domain.stock.repository.StockMasterRepository
 import com.ats.server.domain.stock.service.StockDailyService
 import kotlinx.coroutines.*
@@ -17,7 +18,8 @@ import kotlin.system.measureTimeMillis
 class StockDailyCollector(
     private val stockDailyService: StockDailyService,
     private val stockFinancialRatioService: StockFinancialRatioService,
-    private val stockMasterRepository: StockMasterRepository // 종목코드 가져오기용
+    private val stockMasterRepository: StockMasterRepository, // 종목코드 가져오기용
+    private val stockDailyRepository: StockDailyRepository
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -240,6 +242,73 @@ class StockDailyCollector(
         }
 
         log.info(">>> [KIS Financial 완료] 소요시간: ${time / 1000}초, 대상: $total, 성공: $successCount, 실패: $failCount")
+        return successCount.get()
+    }
+
+    /**
+     * [한국투자증권] 투자자별 매매동향 병렬 수집 (Bulk)
+     * - 대상: 해당 날짜에 stock_daily 데이터가 존재하지만, 매매동향(개인/기관/외국인)이 NULL인 종목
+     */
+    fun collectInvestorTrendAll(date: LocalDate, token: String): Int {
+        // 1. 수집 대상 종목 선정 (DB 쿼리)
+        val codes = stockDailyRepository.findStockCodesForInvestorTrendUpdate(date)
+
+        val total = codes.size
+        if (total == 0) {
+            log.info(">>> [KIS Investor Collector] 날짜($date)에 업데이트할 대상 종목이 없습니다.")
+            return 0
+        }
+
+        log.info(">>> [KIS Investor Collector] 날짜($date) 총 ${total}개 종목 매매동향 업데이트 시작")
+
+        val successCount = AtomicInteger(0)
+        val failCount = AtomicInteger(0)
+
+        val time = measureTimeMillis {
+            runBlocking(Dispatchers.IO) {
+                codes.forEach { stockCode ->
+                    launch {
+                        kisLimitSemaphore.withPermit {
+                            var retryCount = 0
+                            val maxRetry = 3
+                            var isSuccess = false
+
+                            while (retryCount < maxRetry && !isSuccess) {
+                                try {
+                                    val result = stockDailyService.fetchAndSaveInvestorTrend(
+                                        stockCode = stockCode,
+                                        date = date,
+                                        token = token
+                                    )
+
+                                    if (result) successCount.incrementAndGet()
+                                    isSuccess = true
+
+                                    // API 호출 간격 조절
+                                    delay(200)
+
+                                } catch (e: HttpServerErrorException) {
+                                    // TPS 초과 등 서버 에러 처리
+                                    if (e.responseBodyAsString.contains("초당") || e.responseBodyAsString.contains("EGW00201")) {
+                                        retryCount++
+                                        delay(1000)
+                                    } else {
+                                        log.error("KIS 500 Error [$stockCode]: ${e.responseBodyAsString}")
+                                        break
+                                    }
+                                } catch (e: Exception) {
+                                    log.error("KIS Error [$stockCode]: ${e.message}")
+                                    break
+                                }
+                            }
+                            if (!isSuccess) failCount.incrementAndGet()
+                        }
+                    }
+                }
+            }
+        }
+
+        log.info(">>> [KIS Investor Collector] 완료 - 소요시간: ${time / 1000}초, 대상: $total, 성공: $successCount, 실패: $failCount")
         return successCount.get()
     }
 }
