@@ -27,7 +27,7 @@ class StockDataScheduler(
     suspend fun runDailyStockCollection() {
         val startMsg = ">>> [runDailyStockCollection - Scheduler] 일일 주가 및 재무비율 수집 시작"
         log.info(startMsg)
-        telegramService.sendMessage(startMsg)
+//        telegramService.sendMessage(startMsg)
         try{
             // 1. 최신 실전 토큰 가져오기 (또는 발급)
             val token = stockDailyService.getApiToken("KIS")
@@ -45,7 +45,7 @@ class StockDataScheduler(
             log.info("총 ${count}건의 데이터가 수집/갱신되었습니다.")
 
             // [텔레그램] 결과 요약 전송
-            telegramService.sendMessage(summaryMsg)
+//            telegramService.sendMessage(summaryMsg)
 
         } catch (e: Exception) {
             log.error(">>> [runDailyStockCollection - Scheduler] 수집 중 치명적 오류 발생: ${e.message}")
@@ -56,7 +56,7 @@ class StockDataScheduler(
         } finally {
             val finalMsg = ">>> [runDailyStockCollection - Scheduler] 수집 프로세스 종료"
             log.info(finalMsg)
-            telegramService.sendMessage(finalMsg)
+//            telegramService.sendMessage(finalMsg)
         }
     }
 
@@ -67,11 +67,11 @@ class StockDataScheduler(
     suspend fun runDailyStockCalculateCollection() {
         val startMsg = ">>> [runDailyStockCalculateCollection - Scheduler] 일일 주가 지표(MACD 등) 계산 시작"
         log.info(startMsg)
-        telegramService.sendMessage(startMsg)
+//        telegramService.sendMessage(startMsg)
         try{
             val today = LocalDate.now()
 
-            telegramService.sendMessage("⏳ 지표(MACD 등) 계산 시작...")
+//            telegramService.sendMessage("⏳ 지표(MACD 등) 계산 시작...")
             stockDailyService.calculateIndicatorsForPeriod(today, today)
 
         } catch (e: Exception) {
@@ -83,7 +83,7 @@ class StockDataScheduler(
         } finally {
             val finalMsg = "✅ runDailyStockCalculateCollection 지표 계산 완료"
             log.info(finalMsg)
-            telegramService.sendMessage(finalMsg)
+//            telegramService.sendMessage(finalMsg)
         }
     }
 
@@ -96,7 +96,7 @@ class StockDataScheduler(
     suspend fun runDailyStockInvestorTrendCollection() {
         val startMsg = ">>> [runDailyStockInvestorTrendCollection - Scheduler] 일일 투자자별 매매동향 수집 시작"
         log.info(startMsg)
-        telegramService.sendMessage(startMsg)
+//        telegramService.sendMessage(startMsg)
         try{
             // 1. 최신 실전 토큰 가져오기 (또는 발급)
             val token = stockDailyService.getApiToken("KIS")
@@ -114,7 +114,7 @@ class StockDataScheduler(
             log.info("총 ${count}건의 투자자 매매동향이 업데이트되었습니다.")
 
             // [텔레그램] 결과 요약 전송
-            telegramService.sendMessage(summaryMsg)
+//            telegramService.sendMessage(summaryMsg)
 
         } catch (e: Exception) {
             log.error(">>> [runDailyStockInvestorTrendCollection - Scheduler] 수집 중 치명적 오류 발생: ${e.message}")
@@ -125,7 +125,7 @@ class StockDataScheduler(
         } finally {
             val finalMsg = ">>> [runDailyStockInvestorTrendCollection - Scheduler] 수집 프로세스 종료"
             log.info(finalMsg)
-            telegramService.sendMessage(finalMsg)
+//            telegramService.sendMessage(finalMsg)
         }
     }
 
