@@ -23,7 +23,7 @@ class StockEmailService(
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Transactional(readOnly = true)
-    fun sendDailyRecommendationEmail(targetDate: LocalDate, toEmail: String) {
+    fun sendDailyRecommendationEmail(targetDate: LocalDate, toEmails: List<String>) {
         // 1. 데이터 조회
         val buyList = stockDailyRepository.findTop100ByBaseDateAndCrossTypeOrderByRsiAsc(targetDate, 1)
         val sellList = stockDailyRepository.findTop100ByBaseDateAndCrossTypeOrderByRsiDesc(targetDate, -1)
@@ -45,18 +45,20 @@ class StockEmailService(
         val content = buildEmailContent(targetDate, buyList, sellList, stockMap)
 
         // 4. 이메일 발송
-        try {
-            val message: MimeMessage = javaMailSender.createMimeMessage()
-            val helper = MimeMessageHelper(message, true, "UTF-8")
+        toEmails.forEach { email ->
+            try {
+                val message: MimeMessage = javaMailSender.createMimeMessage()
+                val helper = MimeMessageHelper(message, true, "UTF-8")
 
-            helper.setTo(toEmail)
-            helper.setSubject(subject)
-            helper.setText(content, true)
+                helper.setTo(email) // 한 명씩 설정
+                helper.setSubject(subject)
+                helper.setText(content, true)
 
-            javaMailSender.send(message)
-            log.info("추천 종목 이메일 발송 성공 (To: $toEmail)")
-        } catch (e: Exception) {
-            log.error("이메일 발송 실패: ${e.message}")
+                javaMailSender.send(message)
+                log.info("추천 종목 이메일 발송 성공 (To: $email)")
+            } catch (e: Exception) {
+                log.error("이메일 발송 실패 (To: $email): ${e.message}")
+            }
         }
     }
 
