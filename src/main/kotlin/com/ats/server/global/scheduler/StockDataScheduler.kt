@@ -143,8 +143,9 @@ class StockDataScheduler(
         try {
             val today = LocalDate.now()
 
+            val userEmails = listOf("ktgstar@gmail.com", "sycop78@gmail.com")
             // 이메일 발송 로직 호출 (받는 사람 이메일 지정)
-            stockEmailService.sendDailyRecommendationEmail(today, "ktgstar@gmail.com")
+            stockEmailService.sendDailyRecommendationEmail(today, userEmails)
 
             log.info(">>> [sendDailyRecommendationEmail - Scheduler] 이메일 발송 완료")
             telegramService.sendMessage("✅ [sendDailyRecommendationEmail - Scheduler] 이메일 발송이 완료되었습니다.")
