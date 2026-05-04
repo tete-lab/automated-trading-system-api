@@ -26,12 +26,30 @@ class StockDailyController(
     @GetMapping("/{stockCode}")
     fun getDailyList(
         @PathVariable stockCode: String,
-        @Parameter(description = "시작일 (yyyy-MM-dd)", example = "2024-01-01")
+        @Parameter(description = "시작일 (yyyy-MM-dd)", example = "2026-01-01")
         @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") startDate: LocalDate,
-        @Parameter(description = "종료일 (yyyy-MM-dd)", example = "2024-01-31")
+        @Parameter(description = "종료일 (yyyy-MM-dd)", example = "2026-01-31")
         @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") endDate: LocalDate
     ): ResponseEntity<List<StockDailyRes>> {
         return ResponseEntity.ok(stockDailyService.getDailyList(stockCode, startDate, endDate))
+    }
+
+    @Operation(summary = "매수 추천 Top 100 조회", description = "기준일에 골든크로스가 발생한 종목을 RSI 오름차순으로 100개 조회합니다.")
+    @GetMapping("/recommend/buy")
+    fun getBuyRecommendations(
+        @Parameter(description = "기준일 (yyyy-MM-dd)", example = "2026-01-15")
+        @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") baseDate: LocalDate
+    ): ResponseEntity<List<StockDailyRes>> {
+        return ResponseEntity.ok(stockDailyService.getGoldenCrossTop100(baseDate))
+    }
+
+    @Operation(summary = "매도 추천 Top 100 조회", description = "기준일에 데드크로스가 발생한 종목을 RSI 내림차순으로 100개 조회합니다.")
+    @GetMapping("/recommend/sell")
+    fun getSellRecommendations(
+        @Parameter(description = "기준일 (yyyy-MM-dd)", example = "2026-01-15")
+        @RequestParam @DateTimeFormat(pattern = "yyyy-MM-dd") baseDate: LocalDate
+    ): ResponseEntity<List<StockDailyRes>> {
+        return ResponseEntity.ok(stockDailyService.getDeadCrossTop100(baseDate))
     }
 
     @Operation(summary = "일별 시세 등록", description = "하루치 시세 데이터를 등록합니다.")

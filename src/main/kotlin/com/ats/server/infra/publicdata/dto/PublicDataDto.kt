@@ -30,7 +30,7 @@ data class PublicDataItem(
     @JsonProperty("srtnCd") val srtnCd: String,   // 종목코드 (A005930)
     @JsonProperty("itmsNm") val itmsNm: String,   // 종목명
     @JsonProperty("mrktCtg") val mrktCtg: String, // 시장구분 (KOSPI)
-    @JsonProperty("basDt") val basDt: String,     // 기준일자 (20240115)
+    @JsonProperty("basDt") val basDt: String,     // 기준일자 (20260115)
     @JsonProperty("clpr") val clpr: String,       // 종가
     @JsonProperty("mkp") val mkp: String,         // 시가
     @JsonProperty("hipr") val hipr: String,       // 고가
