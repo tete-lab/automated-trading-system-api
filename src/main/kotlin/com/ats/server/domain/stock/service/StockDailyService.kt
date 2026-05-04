@@ -71,6 +71,20 @@ class StockDailyService(
         return list.map { toRes(it) }
     }
 
+    // 매수 추천: 골든크로스(1) + RSI 오름차순 Top 100
+    fun getGoldenCrossTop100(baseDate: LocalDate): List<StockDailyRes> {
+        return stockDailyRepository
+            .findTop100ByBaseDateAndCrossTypeOrderByRsiAsc(baseDate, 1)
+            .map { toRes(it) }
+    }
+
+    // 매도 추천: 데드크로스(-1) + RSI 내림차순 Top 100
+    fun getDeadCrossTop100(baseDate: LocalDate): List<StockDailyRes> {
+        return stockDailyRepository
+            .findTop100ByBaseDateAndCrossTypeOrderByRsiDesc(baseDate, -1)
+            .map { toRes(it) }
+    }
+
     // 단건 등록
     @Transactional
     fun createDaily(req: StockDailyCreateReq): Long {

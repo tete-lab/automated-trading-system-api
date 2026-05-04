@@ -11,7 +11,7 @@ data class StockDailyCreateReq(
     @field:NotBlank
     val stockCode: String,
 
-    @field:Schema(description = "기준 일자", example = "2024-01-15")
+    @field:Schema(description = "기준 일자", example = "2026-01-15")
     @field:NotNull
     val baseDate: LocalDate,
 

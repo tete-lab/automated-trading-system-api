@@ -16,7 +16,7 @@ interface StockDailyRepository : JpaRepository<StockDaily, Long> {
     // 특정 날짜의 데이터 조회 (수정 시 사용)
     fun findByStockCodeAndBaseDate(stockCode: String, baseDate: LocalDate): Optional<StockDaily>
 
-    // 차트용 기간 조회 (예: 2024-01-01 ~ 2024-01-31 데이터)
+    // 차트용 기간 조회 (예: 2026-01-01 ~ 2026-01-31 데이터)
     fun findAllByStockCodeAndBaseDateBetweenOrderByBaseDateAsc(
         stockCode: String,
         startDate: LocalDate,

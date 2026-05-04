@@ -36,7 +36,7 @@ data class StockFundamentalCreateReq(
     val divYield: BigDecimal?,
     @field:Schema(description = "주당 배당금(원)", example = "1400")
     val divRate: BigDecimal?,
-    @field:Schema(description = "배당 지급일", example = "2024-04-20")
+    @field:Schema(description = "배당 지급일", example = "2026-04-20")
     val divPayDate: LocalDate?
 )
 
